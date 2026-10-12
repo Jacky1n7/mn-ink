@@ -1,6 +1,6 @@
 {
   "name": "mn-ink",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Notability-style pressure brushes and shape snapping as a handwriting layer on MarginNote 4 mind maps",
   "type": "module",
@@ -9,6 +9,6 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:dev": "node scripts/build.mjs --dev",
-    "test": "node --test test/"
+    "test": "node --test test/ && node scripts/page-test.mjs > /dev/null && echo page ok"
   }
 }

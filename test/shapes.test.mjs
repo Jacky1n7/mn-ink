@@ -65,3 +65,54 @@ test('a "2"-like stroke is left alone', () => {
   const s = ellipse(200, 150, 60, 50, 0, 0.45).concat(along([250, 180], [140, 300], 30), along([140, 300], [280, 300], 30));
   assert.equal(kind(wobble(s, 2)), null);
 });
+
+// ---- √ recognition ----------------------------------------------------------
+const { inkRecognizeRadical, inkAdjustShape, inkSnapShape } = ctx;
+const userRadicals = JSON.parse(fs.readFileSync(new URL('./fixtures/radicals.json', import.meta.url), 'utf8'));
+
+test('the user\'s own √ strokes are recognised', () => {
+  for (const pts of userRadicals) {
+    const r = inkRecognizeShape(pts.map(([x, y]) => [x, y, 0.5]));
+    assert.equal(r?.kind, 'radical', JSON.stringify(pts.slice(0, 5)));
+    // bar is horizontal and starts at the top of the rise
+    assert.equal(r.pts[3][1], r.pts[4][1]);
+  }
+});
+test('synthetic √ without the little tick', () => {
+  const s = along([100, 160], [120, 200], 10).concat(along([120, 200], [130, 100], 20), along([130, 100], [260, 102], 30));
+  assert.equal(inkRecognizeRadical(wobble(s, 2))?.kind, 'radical');
+});
+test('a "V" is not a radical', () => {
+  const s = along([100, 100], [130, 200], 20).concat(along([130, 200], [160, 100], 20));
+  assert.equal(inkRecognizeRadical(wobble(s, 1)), null);
+});
+test('a check mark is not a radical', () => {
+  const s = along([100, 150], [125, 180], 10).concat(along([125, 180], [190, 90], 25));
+  assert.equal(inkRecognizeRadical(wobble(s, 1)), null);
+});
+test('"r" / "n"-like strokes are not radicals', () => {
+  const s = along([100, 100], [100, 200], 20).concat(along([100, 200], [102, 120], 15), along([102, 120], [140, 112], 10));
+  assert.equal(inkRecognizeRadical(wobble(s, 1)), null);
+});
+
+// ---- hold + drag fine-tuning ------------------------------------------------
+test('dragging after a line snaps moves its end, angle snapped to 15°', () => {
+  const r = inkAdjustShape({ kind: 'line', closed: false, pts: [[0, 0], [100, 0]] }, [100, 0], [200, 3]);
+  assert.ok(Math.abs(r.pts[1][1]) < 1e-9 && Math.abs(r.pts[1][0] - 200.02) < 0.1);
+});
+test('dragging a radical extends its bar', () => {
+  const base = inkRecognizeRadical(userRadicals[0].map(([x, y]) => [x, y, 0.5]));
+  const r = inkAdjustShape(base, base.pts[4], [base.pts[4][0] + 80, base.pts[4][1] + 9]);
+  assert.equal(r.pts[4][0], base.pts[4][0] + 80);
+  assert.equal(r.pts[4][1], base.pts[3][1]);
+});
+test('dragging a rectangle corner resizes it from the opposite corner', () => {
+  const rect = { kind: 'rect', closed: true, pts: [[0, 0], [100, 0], [100, 50], [0, 50], [0, 0]] };
+  const r = inkAdjustShape(rect, [100, 50], [200, 100]);
+  assert.deepEqual([...r.pts[2]], [200, 100]);
+  assert.deepEqual([...r.pts[0]], [0, 0]);
+});
+test('corners snap to nearby nodes', () => {
+  const r = inkSnapShape({ kind: 'line', closed: false, pts: [[0, 0], [98, 3]] }, [[100, 0]], null, 10);
+  assert.deepEqual([...r.pts[1]], [100, 0]);
+});

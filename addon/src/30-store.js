@@ -8,7 +8,8 @@
 //
 // Stroke:
 //   id     unique id
-//   tool   "pen" | "marker"
+//   tool   "pen" | "marker" (marker layers sit under pen layers)
+//   b      brush: "fountain" | "ballpoint" | "brush" | "pencil" (pen only)
 //   color  "#rrggbb"
 //   w      brush size in mind map units
 //   k      zoom at drawing time (outline is computed at that scale so the
@@ -16,6 +17,7 @@
 //   sim    true when the input had no pressure (mouse / finger)
 //   shape  true for a recognised shape (stroked polyline, no pressure)
 //   closed shape is closed
+//   dash   dashed shape outline
 //   a      anchor note id, or null (absolute mind map coordinates)
 //   pts    flat [x, y, p, x, y, p, …] relative to the anchor's top-left corner
 // ---------------------------------------------------------------------------
@@ -57,7 +59,10 @@ function inkSaveNow() {
   var fm = NSFileManager.defaultManager();
   if (!fm.fileExistsAtPath(inkDir())) fm.createDirectoryAtPathWithIntermediateDirectoriesAttributes(inkDir(), true, null);
   var clean = store.strokes.map(function (s) {
-    return { id: s.id, tool: s.tool, color: s.color, w: s.w, k: s.k, sim: s.sim, shape: s.shape, closed: s.closed, a: s.a, pts: s.pts };
+    return {
+      id: s.id, tool: s.tool, b: s.b, color: s.color, w: s.w, k: s.k, sim: s.sim, shape: s.shape, closed: s.closed,
+      dash: s.dash, fill: s.fill, a: s.a, pts: s.pts
+    };
   });
   var json = JSON.stringify({ v: 1, ink: JSON.stringify({ strokes: clean }) });
   var ok = NSData.dataWithStringEncoding(json, 4).writeToFileAtomically(inkFile(store.topicId), true);

@@ -69,8 +69,6 @@ function inkColor(hex, alpha) {
   return c;
 }
 
-var INK_MARKER_ALPHA = 0.36;
-
 // Unflatten pts → [[x, y, p], …].
 function inkTriples(flat) {
   var out = [];
@@ -81,7 +79,7 @@ function inkTriples(flat) {
 function inkStrokeOutline(s) {
   var k = s.k || 1;
   var pts = inkTriples(s.pts).map(function (p) { return [p[0] * k, p[1] * k, p[2]]; });
-  var outline = INK_FREEHAND.getStroke(pts, inkFreehandOptions(s.tool, s.w * k, s.sim, true));
+  var outline = INK_FREEHAND.getStroke(pts, inkFreehandOptions(inkBrushOf(s.tool, s.b), s.w * k, s.sim, true));
   return outline.map(function (p) { return [p[0] / k, p[1] / k]; });
 }
 
@@ -109,15 +107,18 @@ function inkStrokePath(s) {
 function inkMakeLayer(s) {
   var path = inkStrokePath(s);
   if (!path) return null;
-  var alpha = s.tool === 'marker' ? INK_MARKER_ALPHA : 1;
+  var brush = inkBrushOf(s.tool, s.b);
+  var alpha = inkBrushAlpha(brush);
   var layer = CAShapeLayer.new();
   layer.path = path;
   if (s.shape) {
-    layer.fillColor = UIColor.clearColor();
+    var lw = inkShapeWidth(brush, s.w);
+    layer.fillColor = s.fill ? inkColor(s.fill, 0.18) : UIColor.clearColor();
     layer.strokeColor = inkColor(s.color, alpha);
-    layer.lineWidth = s.w * INK_SHAPE_WIDTH;
+    layer.lineWidth = lw;
     layer.lineCap = 'round';
     layer.lineJoin = 'round';
+    if (s.dash) layer.lineDashPattern = [lw * 2.6, lw * 2.2];
   } else {
     layer.fillColor = inkColor(s.color, alpha);
     layer.strokeColor = UIColor.clearColor();

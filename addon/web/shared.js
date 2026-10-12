@@ -3,24 +3,46 @@
 // brush settings and shape recognition. No DOM, no MarginNote objects.
 // ---------------------------------------------------------------------------
 
-// perfect-freehand options per tool. `size` is the nominal width in the units
-// of the points; `simulate` = the input device has no pressure (mouse, finger).
-function inkFreehandOptions(tool, size, simulate, last) {
-  if (tool === 'marker') {
-    return {
-      size: size, thinning: 0, smoothing: 0.7, streamline: 0.55, simulatePressure: false, last: !!last,
-      start: { cap: true, taper: 0 }, end: { cap: true, taper: 0 }
-    };
-  }
-  return {
-    size: size, thinning: 0.62, smoothing: 0.55, streamline: 0.4, simulatePressure: !!simulate, last: !!last,
-    easing: function (t) { return Math.sin((t * Math.PI) / 2); },
-    start: { cap: true, taper: 0 }, end: { cap: true, taper: 0 }
-  };
+// Brushes. thinning = how much pressure changes the width; alpha = ink opacity;
+// shape = width of a recognised shape relative to the brush size.
+var INK_BRUSHES = {
+  fountain: { name: '钢笔', thinning: 0.62, smoothing: 0.55, streamline: 0.4, alpha: 1, shape: 0.72, ease: 'sine' },
+  ballpoint: { name: '圆珠笔', thinning: 0.18, smoothing: 0.5, streamline: 0.45, alpha: 1, shape: 0.9 },
+  brush: { name: '毛笔', thinning: 0.9, smoothing: 0.62, streamline: 0.5, alpha: 1, shape: 0.6, ease: 'cubic', taper: 3 },
+  pencil: { name: '铅笔', thinning: 0.4, smoothing: 0.4, streamline: 0.3, alpha: 0.78, shape: 0.8 },
+  marker: { name: '荧光笔', thinning: 0, smoothing: 0.7, streamline: 0.55, alpha: 0.36, shape: 1 }
+};
+
+function inkBrushOf(tool, brush) {
+  if (tool === 'marker') return 'marker';
+  return INK_BRUSHES[brush] && brush !== 'marker' ? brush : 'fountain';
 }
 
-// Width a snapped shape is stroked with, relative to the brush size.
-var INK_SHAPE_WIDTH = 0.72;
+function inkBrushAlpha(brush) {
+  return (INK_BRUSHES[brush] || INK_BRUSHES.fountain).alpha;
+}
+
+function inkShapeWidth(brush, size) {
+  return size * (INK_BRUSHES[brush] || INK_BRUSHES.fountain).shape;
+}
+
+// perfect-freehand options. `size` is the nominal width in the units of the
+// points; `simulate` = the input device has no pressure (mouse, finger).
+function inkFreehandOptions(brush, size, simulate, last) {
+  var b = INK_BRUSHES[brush] || INK_BRUSHES.fountain;
+  var o = {
+    size: size, thinning: b.thinning, smoothing: b.smoothing, streamline: b.streamline,
+    simulatePressure: brush === 'marker' ? false : !!simulate, last: !!last,
+    start: { cap: true, taper: 0 }, end: { cap: true, taper: 0 }
+  };
+  if (b.ease === 'sine') o.easing = function (t) { return Math.sin((t * Math.PI) / 2); };
+  if (b.ease === 'cubic') o.easing = function (t) { return t * t * (3 - 2 * t); };
+  if (b.taper) {
+    o.start = { cap: true, taper: size * b.taper * 0.5 };
+    o.end = { cap: true, taper: size * b.taper };
+  }
+  return o;
+}
 
 function inkDist(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -263,6 +285,9 @@ function inkRecognizeShape(pts) {
     return null;
   }
 
+  var rad = inkRecognizeRadical(pts);
+  if (rad) return rad;
+
   // Open polyline with a few straight segments (an "L", a zig-zag, an arrow shaft…).
   var oidx = inkRdp(ring, 0.05 * diag);
   if (oidx.length >= 3 && oidx.length <= 4) {
@@ -292,4 +317,132 @@ function inkSnapPolyline(poly) {
     else b[0] = a[0];
   }
   return out;
+}
+
+/**
+ * A square-root sign written in one stroke: optional tick up, down to the
+ * bottom, (near) vertical rise, horizontal bar. Returns a tidy radical or null.
+ * Screen coordinates (y grows downwards).
+ */
+function inkRecognizeRadical(pts, strict) {
+  if (!pts || pts.length < 6) return null;
+  var bb = inkBBox(pts);
+  var H = bb.y1 - bb.y0, Wd = bb.x1 - bb.x0;
+  if (H < 10 || Wd < 10) return null;
+  var ring = inkResample(pts, 80);
+  var idx = inkRdp(ring, 0.055 * Math.max(H, Wd * 0.5));
+  var v = idx.map(function (k) { return ring[k]; });
+  if (v.length < 4 || v.length > 11) return null;
+
+  // T: first vertex (from the 3rd on) that reaches the top band.
+  var ti = -1;
+  for (var i = 2; i < v.length; i++) {
+    if (v[i][1] <= bb.y0 + 0.2 * H) { ti = i; break; }
+  }
+  if (ti < 0 || ti === v.length - 1 && inkDist(v[ti], ring[ring.length - 1]) > 0.1 * H) return null;
+  var T = v[ti], B = v[ti - 1];
+  var rise = B[1] - T[1];
+  if (B[1] < bb.y1 - 0.25 * H || rise < 0.6 * H) return null;
+  if (Math.abs(T[0] - B[0]) > 0.75 * rise) return null; // the rise is steep
+
+  // Tick: the part before B goes down into B.
+  var S = v[ti - 2];
+  if (B[1] - S[1] < 0.15 * rise || B[1] - S[1] > 0.9 * rise) return null;
+  if (S[0] > B[0] + 0.1 * rise) return null;
+  if (B[0] - v[0][0] > 1.2 * rise) return null;
+
+  // Bar: everything after T stays close to a horizontal line and goes right.
+  var E = pts[pts.length - 1];
+  var barLen = E[0] - T[0];
+  if (barLen < (strict ? 0.7 : 0.45) * rise) return null;
+  var tStart = idx[ti];
+  for (var k = tStart; k < ring.length; k++) {
+    if (Math.abs(ring[k][1] - T[1]) > 0.22 * rise) return null;
+    if (ring[k][0] < T[0] - 0.15 * rise) return null;
+  }
+
+  var h = rise;
+  var b = [B[0], B[1]];
+  var t = [B[0] + 0.22 * h, B[1] - h];
+  var s1 = [B[0] - 0.3 * h, B[1] - 0.42 * h];
+  var s0 = [s1[0] - 0.12 * h, s1[1] + 0.1 * h];
+  var e = [Math.max(E[0], t[0] + 0.45 * h), t[1]];
+  return { kind: 'radical', closed: false, pts: [s0, s1, b, t, e] };
+}
+
+// ---------------------------------------------------------------------------
+// Snapping. `nodes` are [x, y] candidates (vertices of other shapes); grid is
+// {ox, oy, step} in the same units, or null.
+// ---------------------------------------------------------------------------
+function inkSnapPoint(p, nodes, grid, radius) {
+  var best = null, bestD = radius;
+  for (var i = 0; nodes && i < nodes.length; i++) {
+    var d = inkDist(p, nodes[i]);
+    if (d < bestD) { bestD = d; best = [nodes[i][0], nodes[i][1]]; }
+  }
+  if (best) return { p: best, kind: 'node' };
+  if (grid && grid.step > 0) {
+    var gx = grid.ox + Math.round((p[0] - grid.ox) / grid.step) * grid.step;
+    var gy = grid.oy + Math.round((p[1] - grid.oy) / grid.step) * grid.step;
+    if (Math.hypot(gx - p[0], gy - p[1]) < Math.min(radius, grid.step * 0.3)) return { p: [gx, gy], kind: 'grid' };
+  }
+  return null;
+}
+
+// Snap the corner points of a straight-edged shape; curves keep their form.
+function inkSnapShape(shape, nodes, grid, radius) {
+  if (!shape || shape.kind === 'circle' || shape.kind === 'ellipse') return shape;
+  var pts = shape.pts.map(function (p) {
+    var hit = inkSnapPoint(p, nodes, grid, radius);
+    return hit ? hit.p : [p[0], p[1]];
+  });
+  if (shape.closed && pts.length > 1) pts[pts.length - 1] = [pts[0][0], pts[0][1]];
+  return { kind: shape.kind, closed: shape.closed, pts: pts };
+}
+
+/**
+ * Fine-tune a snapped shape while the pen keeps moving ("hold, then drag").
+ * base: the shape as recognised; p0: pen position when it snapped; p: pen now.
+ */
+function inkAdjustShape(base, p0, p) {
+  var pts = base.pts;
+  var k = base.kind;
+  if (k === 'line') {
+    var a = pts[0];
+    var ang = Math.atan2(p[1] - a[1], p[0] - a[0]);
+    var len = inkDist(a, p);
+    ang = inkSnapAngle(ang, Math.PI / 12, (3 * Math.PI) / 180);
+    return { kind: k, closed: false, pts: [a, [a[0] + len * Math.cos(ang), a[1] + len * Math.sin(ang)]] };
+  }
+  if (k === 'radical') {
+    var out = pts.map(function (q) { return [q[0], q[1]]; });
+    out[4][0] = Math.max(out[3][0] + 4, p[0]);
+    return { kind: k, closed: false, pts: out };
+  }
+  if (k === 'polyline') {
+    var o2 = pts.map(function (q) { return [q[0], q[1]]; });
+    o2[o2.length - 1] = [p[0], p[1]];
+    return { kind: k, closed: false, pts: inkSnapPolyline(o2) };
+  }
+  var bb = inkBBox(pts);
+  if (k === 'circle') {
+    var c = [(bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2];
+    var d0 = inkDist(c, p0);
+    var sc = d0 > 1 ? inkDist(c, p) / d0 : 1;
+    return { kind: k, closed: true, pts: pts.map(function (q) { return [c[0] + (q[0] - c[0]) * sc, c[1] + (q[1] - c[1]) * sc]; }) };
+  }
+  // Scale about the bounding-box corner opposite to where the pen was.
+  var ax = Math.abs(p0[0] - bb.x0) < Math.abs(p0[0] - bb.x1) ? bb.x1 : bb.x0;
+  var ay = Math.abs(p0[1] - bb.y0) < Math.abs(p0[1] - bb.y1) ? bb.y1 : bb.y0;
+  var sx = Math.abs(p0[0] - ax) > 4 ? (p[0] - ax) / (p0[0] - ax) : 1;
+  var sy = Math.abs(p0[1] - ay) > 4 ? (p[1] - ay) / (p0[1] - ay) : 1;
+  return { kind: k, closed: base.closed, pts: pts.map(function (q) { return [ax + (q[0] - ax) * sx, ay + (q[1] - ay) * sy]; }) };
+}
+
+// Straight-line highlighter: replace a marker stroke with its chord.
+function inkStraighten(pts) {
+  var a = pts[0], b = pts[pts.length - 1];
+  var ang = inkSnapAngle(Math.atan2(b[1] - a[1], b[0] - a[0]), Math.PI / 2, (6 * Math.PI) / 180);
+  var len = inkDist(a, b);
+  return { kind: 'line', closed: false, pts: [[a[0], a[1]], [a[0] + len * Math.cos(ang), a[1] + len * Math.sin(ang)]] };
 }

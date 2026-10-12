@@ -59,6 +59,8 @@ function inkCloseOverlay() {
   if (!ui) return;
   INK_UI = null;
   INK_SEL = null;
+  if (INK_HIDDEN && INK_R && INK_R.layers[INK_HIDDEN]) INK_R.layers[INK_HIDDEN].hidden = false;
+  INK_HIDDEN = null;
   try {
     ui.web.stopLoading();
     ui.web.delegate = null;
@@ -118,25 +120,33 @@ function inkOnPageUrl(url) {
   inkJs('window.ink && ink.ack(' + data.seq + ')');
 }
 
+function inkPushState(views, opts) {
+  inkCall('state', inkHistoryState());
+  if (opts && opts.nodes) inkCall('nodes', inkSnapNodes());
+  if (opts && opts.sel) inkCall('selection', INK_SEL ? inkSelectionInfo(views) : null);
+}
+
 function inkHandleMsg(views, m) {
   switch (m.t) {
     case 'ready':
-      inkCall('init', { prefs: inkLoadPrefs(), z: views.sv.zoomScale, state: inkHistoryState(), version: INK_VERSION });
+      var v0 = inkView(views);
+      v0.minZ = views.sv.minimumZoomScale;
+      v0.maxZ = views.sv.maximumZoomScale;
+      inkCall('init', { prefs: inkLoadPrefs(), view: v0, state: inkHistoryState(), nodes: inkSnapNodes(), version: INK_VERSION });
       break;
-    case 'view': {
-      var z0 = views.sv.zoomScale;
-      var z = inkApplyView(views, m);
-      if (z !== z0) inkCall('setZoom', z);
+    case 'view':
+      inkApplyView(views, m);
+      inkCall('setView', inkView(views));
       break;
-    }
     case 'stroke': {
       var s = inkCommitStroke(views, m);
       inkCall('committed', { lid: m.lid, ok: !!s, state: inkHistoryState() });
+      if (s && s.shape) inkCall('nodes', inkSnapNodes());
       break;
     }
     case 'erase':
       inkErase(views, m);
-      inkCall('state', inkHistoryState());
+      inkPushState(views, { nodes: true });
       break;
     case 'lasso':
       inkCall('lassoResult', inkLasso(views, m));
@@ -146,26 +156,42 @@ function inkHandleMsg(views, m) {
       break;
     case 'moveEnd':
       inkMoveCommit(views, m.dx, m.dy);
-      inkCall('state', inkHistoryState());
+      inkPushState(views, { nodes: true, sel: true });
+      break;
+    case 'scale':
+      inkScalePreview(views, m);
+      break;
+    case 'scaleEnd':
+      inkScaleCommit(views, m);
+      inkPushState(views, { nodes: true, sel: true });
       break;
     case 'recolor':
       inkRecolorSelection(String(m.color));
-      inkCall('state', inkHistoryState());
+      inkPushState(views, { sel: true });
+      break;
+    case 'duplicate':
+      inkDuplicateSelection(views);
+      inkPushState(views, { nodes: true, sel: true });
       break;
     case 'deleteSel':
       inkDeleteSelection();
-      inkCall('selection', null);
-      inkCall('state', inkHistoryState());
+      inkPushState(views, { nodes: true, sel: true });
       break;
     case 'deselect':
       INK_SEL = null;
+      break;
+    case 'editBegin':
+      inkEditBegin(m.id);
+      break;
+    case 'editEnd':
+      inkEditEnd(views, m);
+      inkPushState(views, { nodes: true, sel: true });
       break;
     case 'undo':
     case 'redo':
       if (m.t === 'undo') inkUndo();
       else inkRedo();
-      inkCall('selection', null);
-      inkCall('state', inkHistoryState());
+      inkPushState(views, { nodes: true, sel: true });
       break;
     case 'prefs':
       inkSavePrefs(m.prefs);
