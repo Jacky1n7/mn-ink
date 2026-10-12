@@ -116,3 +116,36 @@ test('corners snap to nearby nodes', () => {
   const r = inkSnapShape({ kind: 'line', closed: false, pts: [[0, 0], [98, 3]] }, [[100, 0]], null, 10);
   assert.deepEqual([...r.pts[1]], [100, 0]);
 });
+
+// ---- arcs and arrows -------------------------------------------------------
+test('a quarter arc is recognised as an arc', () => {
+  const arc = [];
+  for (let i = 0; i <= 40; i++) { const a = Math.PI + (i / 40) * (Math.PI / 2); arc.push([200 + 100 * Math.cos(a), 200 + 100 * Math.sin(a)]); }
+  const r = inkRecognizeShape(wobble(arc, 2));
+  assert.equal(r?.kind, 'arc');
+  assert.ok(Math.abs(r.arc.r - 100) < 6);
+});
+test('a semicircle is an arc, a full circle is still a circle', () => {
+  const semi = [];
+  for (let i = 0; i <= 50; i++) { const a = (i / 50) * Math.PI; semi.push([200 + 80 * Math.cos(a), 200 + 80 * Math.sin(a)]); }
+  assert.equal(kind(wobble(semi, 2)), 'arc');
+  assert.equal(kind(wobble(ellipse(200, 200, 80, 79), 3)), 'circle');
+});
+test('a one-stroke arrow is recognised', () => {
+  const s = along([50, 200], [300, 200], 40).concat(along([300, 200], [270, 180], 6), along([270, 180], [300, 200], 6), along([300, 200], [270, 222], 6));
+  const r = inkRecognizeShape(wobble(s, 1.5));
+  assert.equal(r?.kind, 'arrow');
+  assert.ok(Math.abs(r.pts[1][1] - 200) < 3);
+});
+test('the user\'s √ is still a radical, not an arc or arrow', () => {
+  for (const pts of userRadicals) assert.equal(inkRecognizeShape(pts.map(([x, y]) => [x, y, 0.5]))?.kind, 'radical');
+});
+test('dragging an arc extends it along the circle', () => {
+  const arc = [];
+  for (let i = 0; i <= 40; i++) { const a = Math.PI + (i / 40) * (Math.PI / 2); arc.push([200 + 100 * Math.cos(a), 200 + 100 * Math.sin(a)]); }
+  const base = inkRecognizeShape(arc);
+  const end = [200 + 100 * Math.cos(2 * Math.PI), 200 + 100 * Math.sin(2 * Math.PI)];
+  const r = inkAdjustShape(base, base.pts[base.pts.length - 1], end);
+  const last = r.pts[r.pts.length - 1];
+  assert.ok(Math.hypot(last[0] - end[0], last[1] - end[1]) < 2);
+});

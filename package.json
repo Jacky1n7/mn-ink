@@ -1,14 +1,28 @@
 {
   "name": "mn-ink",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Notability-style pressure brushes and shape snapping as a handwriting layer on MarginNote 4 mind maps",
+  "description": "Notability / GoodNotes-style handwriting for MarginNote 4: pressure brushes, shape snapping, GoodNotes lasso, PDF pages, stored inside the notebook",
   "type": "module",
   "license": "MIT",
   "author": "Jacky1n7",
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:dev": "node scripts/build.mjs --dev",
-    "test": "node --test test/ && node scripts/page-test.mjs > /dev/null && echo page ok"
-  }
+    "test": "node --test test/ && node scripts/page-test.mjs > /dev/null && echo page ok",
+    "release": "sh scripts/release.sh"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jacky1n7/mn-ink.git"
+  },
+  "homepage": "https://github.com/Jacky1n7/mn-ink",
+  "keywords": [
+    "marginnote",
+    "handwriting",
+    "apple-pencil",
+    "perfect-freehand",
+    "goodnotes",
+    "notability"
+  ]
 }

@@ -5,14 +5,20 @@
 
 var INK_ADDONS = [];
 
+var INK_UNDO_NOTES = ['NSUndoManagerDidUndoChangeNotification', 'NSUndoManagerDidRedoChangeNotification'];
+
 function inkEnsureObserver(addon) {
   if (INK_ADDONS.indexOf(addon) >= 0) return;
-  NSNotificationCenter.defaultCenter().addObserverSelectorName(addon, 'onAddonBroadcast:', 'AddonBroadcast');
+  var nc = NSNotificationCenter.defaultCenter();
+  nc.addObserverSelectorName(addon, 'onAddonBroadcast:', 'AddonBroadcast');
+  INK_UNDO_NOTES.forEach(function (n) { nc.addObserverSelectorName(addon, 'onUndoChange:', n); });
   INK_ADDONS.push(addon);
 }
 
 function inkDropObserver(addon) {
-  NSNotificationCenter.defaultCenter().removeObserverName(addon, 'AddonBroadcast');
+  var nc = NSNotificationCenter.defaultCenter();
+  nc.removeObserverName(addon, 'AddonBroadcast');
+  INK_UNDO_NOTES.forEach(function (n) { nc.removeObserverName(addon, n); });
   var i = INK_ADDONS.indexOf(addon);
   if (i >= 0) INK_ADDONS.splice(i, 1);
 }
@@ -60,6 +66,18 @@ JSB.newAddon = function (mainPath) {
     toggleInk: function (sender) {
       var addon = self;
       inkSafe(function () { inkToggle(addon); });
+    },
+    onMNMapPen: function (sender) {
+      var addon = self;
+      inkSafe(function () { inkOnMNPen(addon, 'map'); });
+    },
+    onMNDocPen: function (sender) {
+      var addon = self;
+      inkSafe(function () { inkOnMNPen(addon, 'doc'); });
+    },
+    onUndoChange: function (sender) {
+      var addon = self;
+      inkSafe(function () { inkOnUndoChange(addon); });
     },
     onAddonBroadcast: function (sender) {
       var addon = self;

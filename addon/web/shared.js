@@ -28,10 +28,12 @@ function inkShapeWidth(brush, size) {
 
 // perfect-freehand options. `size` is the nominal width in the units of the
 // points; `simulate` = the input device has no pressure (mouse, finger).
-function inkFreehandOptions(brush, size, simulate, last) {
+// `sens` (0–1, default 0.6) scales how strongly pressure changes the width.
+function inkFreehandOptions(brush, size, simulate, last, sens) {
   var b = INK_BRUSHES[brush] || INK_BRUSHES.fountain;
+  var k = sens == null ? 1 : Math.max(0, Math.min(1.6, sens / 0.6));
   var o = {
-    size: size, thinning: b.thinning, smoothing: b.smoothing, streamline: b.streamline,
+    size: size, thinning: Math.min(0.95, b.thinning * k), smoothing: b.smoothing, streamline: b.streamline,
     simulatePressure: brush === 'marker' ? false : !!simulate, last: !!last,
     start: { cap: true, taper: 0 }, end: { cap: true, taper: 0 }
   };
@@ -288,6 +290,12 @@ function inkRecognizeShape(pts) {
   var rad = inkRecognizeRadical(pts);
   if (rad) return rad;
 
+  var arrow = inkRecognizeArrow(pts);
+  if (arrow) return arrow;
+
+  var arc = inkRecognizeArc(pts, ring, diag);
+  if (arc) return arc;
+
   // Open polyline with a few straight segments (an "L", a zig-zag, an arrow shaft…).
   var oidx = inkRdp(ring, 0.05 * diag);
   if (oidx.length >= 3 && oidx.length <= 4) {
@@ -391,7 +399,13 @@ function inkSnapPoint(p, nodes, grid, radius) {
 
 // Snap the corner points of a straight-edged shape; curves keep their form.
 function inkSnapShape(shape, nodes, grid, radius) {
-  if (!shape || shape.kind === 'circle' || shape.kind === 'ellipse') return shape;
+  if (!shape || shape.kind === 'circle' || shape.kind === 'ellipse' || shape.kind === 'arc') return shape;
+  if (shape.kind === 'arrow') {
+    var tail = inkSnapPoint(shape.pts[0], nodes, grid, radius);
+    var tip = inkSnapPoint(shape.pts[1], nodes, grid, radius);
+    var a = tail ? tail.p : shape.pts[0], t = tip ? tip.p : shape.pts[1];
+    return { kind: 'arrow', closed: false, pts: inkArrowPoints(a, t, inkDist(shape.pts[1], shape.pts[2])) };
+  }
   var pts = shape.pts.map(function (p) {
     var hit = inkSnapPoint(p, nodes, grid, radius);
     return hit ? hit.p : [p[0], p[1]];
@@ -413,6 +427,25 @@ function inkAdjustShape(base, p0, p) {
     var len = inkDist(a, p);
     ang = inkSnapAngle(ang, Math.PI / 12, (3 * Math.PI) / 180);
     return { kind: k, closed: false, pts: [a, [a[0] + len * Math.cos(ang), a[1] + len * Math.sin(ang)]] };
+  }
+  if (k === 'arrow') {
+    var a0p = pts[0], tip0 = pts[1];
+    var head0 = inkDist(pts[1], pts[2]);
+    var ang2 = inkSnapAngle(Math.atan2(p[1] - a0p[1], p[0] - a0p[0]), Math.PI / 12, (3 * Math.PI) / 180);
+    var len2 = inkDist(a0p, p);
+    return { kind: k, closed: false, pts: inkArrowPoints(a0p, [a0p[0] + len2 * Math.cos(ang2), a0p[1] + len2 * Math.sin(ang2)], head0) };
+  }
+  if (k === 'arc' && base.arc) {
+    // The arc's end follows the pen around the same circle.
+    var A = base.arc;
+    var aEnd0 = A.a0 + A.sweep;
+    var aNow = Math.atan2(p[1] - A.cy, p[0] - A.cx);
+    var d = aNow - aEnd0;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    var sw = A.sweep + d;
+    var rr = Math.max(4, Math.hypot(p[0] - A.cx, p[1] - A.cy));
+    return { kind: k, closed: false, pts: inkArcPoints(A.cx, A.cy, (A.r + rr) / 2, A.a0, sw, Math.max(12, Math.round((Math.abs(sw) / Math.PI) * 48))), arc: A };
   }
   if (k === 'radical') {
     var out = pts.map(function (q) { return [q[0], q[1]]; });
@@ -445,4 +478,100 @@ function inkStraighten(pts) {
   var ang = inkSnapAngle(Math.atan2(b[1] - a[1], b[0] - a[0]), Math.PI / 2, (6 * Math.PI) / 180);
   var len = inkDist(a, b);
   return { kind: 'line', closed: false, pts: [[a[0], a[1]], [a[0] + len * Math.cos(ang), a[1] + len * Math.sin(ang)]] };
+}
+
+// ---------------------------------------------------------------------------
+// Arcs: an open stroke that hugs a circle. Least-squares circle fit (Kåsa).
+// ---------------------------------------------------------------------------
+function inkFitCircle(pts) {
+  var n = pts.length, mx = 0, my = 0;
+  for (var i = 0; i < n; i++) { mx += pts[i][0]; my += pts[i][1]; }
+  mx /= n; my /= n;
+  var suu = 0, svv = 0, suv = 0, suuu = 0, svvv = 0, suvv = 0, svuu = 0;
+  for (i = 0; i < n; i++) {
+    var u = pts[i][0] - mx, v = pts[i][1] - my;
+    suu += u * u; svv += v * v; suv += u * v;
+    suuu += u * u * u; svvv += v * v * v; suvv += u * v * v; svuu += v * u * u;
+  }
+  var det = suu * svv - suv * suv;
+  if (Math.abs(det) < 1e-9) return null;
+  var bu = 0.5 * (suuu + suvv), bv = 0.5 * (svvv + svuu);
+  var uc = (bu * svv - bv * suv) / det, vc = (svv === 0 ? 0 : (suu * bv - suv * bu) / det);
+  var cx = uc + mx, cy = vc + my;
+  var r = 0;
+  for (i = 0; i < n; i++) r += Math.hypot(pts[i][0] - cx, pts[i][1] - cy);
+  r /= n;
+  var err = 0;
+  for (i = 0; i < n; i++) err += Math.abs(Math.hypot(pts[i][0] - cx, pts[i][1] - cy) - r);
+  return { cx: cx, cy: cy, r: r, err: err / n / r };
+}
+
+function inkArcPoints(cx, cy, r, a0, sweep, n) {
+  var out = [];
+  for (var i = 0; i <= n; i++) {
+    var a = a0 + (sweep * i) / n;
+    out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  return out;
+}
+
+function inkRecognizeArc(pts, ring, diag) {
+  ring = ring || inkResample(pts, 72);
+  var c = inkFitCircle(ring);
+  if (!c || c.err > 0.05 || c.r < 8 || c.r > diag * 4) return null;
+  // Signed sweep: accumulate the turn around the centre along the stroke.
+  var sweep = 0;
+  for (var i = 1; i < ring.length; i++) {
+    var a = Math.atan2(ring[i - 1][1] - c.cy, ring[i - 1][0] - c.cx);
+    var b = Math.atan2(ring[i][1] - c.cy, ring[i][0] - c.cx);
+    var d = b - a;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    sweep += d;
+  }
+  var abs = Math.abs(sweep);
+  if (abs < (35 * Math.PI) / 180 || abs > (320 * Math.PI) / 180) return null;
+  // A flat arc is better served by the straight-line or polyline rules.
+  var straight = inkMeanDistToPolyline(ring, [ring[0], ring[ring.length - 1]], false) / diag;
+  if (straight < 0.04) return null;
+  var a0 = Math.atan2(ring[0][1] - c.cy, ring[0][0] - c.cx);
+  var n = Math.max(12, Math.round((abs / Math.PI) * 48));
+  return { kind: 'arc', closed: false, pts: inkArcPoints(c.cx, c.cy, c.r, a0, sweep, n), arc: { cx: c.cx, cy: c.cy, r: c.r, a0: a0, sweep: sweep } };
+}
+
+// ---------------------------------------------------------------------------
+// Arrows in one stroke: a long shaft, then a short "<" scribbled at the tip.
+// ---------------------------------------------------------------------------
+function inkArrowPoints(a, tip, head) {
+  var ang = Math.atan2(tip[1] - a[1], tip[0] - a[0]);
+  var spread = (27 * Math.PI) / 180;
+  var b1 = [tip[0] - head * Math.cos(ang - spread), tip[1] - head * Math.sin(ang - spread)];
+  var b2 = [tip[0] - head * Math.cos(ang + spread), tip[1] - head * Math.sin(ang + spread)];
+  return [[a[0], a[1]], [tip[0], tip[1]], b1, [tip[0], tip[1]], b2];
+}
+
+function inkRecognizeArrow(pts) {
+  var ring = inkResample(pts, 90);
+  var bb = inkBBox(ring);
+  var diag = Math.hypot(bb.x1 - bb.x0, bb.y1 - bb.y0);
+  if (diag < 30) return null;
+  var idx = inkRdp(ring, 0.035 * diag);
+  if (idx.length < 4 || idx.length > 7) return null;
+  var v = idx.map(function (k) { return ring[k]; });
+  var shaft = inkDist(v[0], v[1]);
+  var L = inkPathLength(v);
+  if (shaft < 0.55 * L * 0.8 || shaft < 0.6 * diag) return null;
+  var tip = v[1];
+  // everything after the tip stays close to it (the arrow head)
+  var head = 0;
+  for (var i = idx[1]; i < ring.length; i++) head = Math.max(head, inkDist(ring[i], tip));
+  if (head > 0.4 * shaft || head < 0.06 * shaft) return null;
+  // the head goes back towards the shaft (not onward)
+  var dir = [(tip[0] - v[0][0]) / shaft, (tip[1] - v[0][1]) / shaft];
+  var back = 0;
+  for (i = idx[1]; i < ring.length; i++) back = Math.min(back, (ring[i][0] - tip[0]) * dir[0] + (ring[i][1] - tip[1]) * dir[1]);
+  if (back > -0.04 * shaft) return null;
+  var ang = inkSnapAngle(Math.atan2(tip[1] - v[0][1], tip[0] - v[0][0]), Math.PI / 4, (5 * Math.PI) / 180);
+  var t = [v[0][0] + shaft * Math.cos(ang), v[0][1] + shaft * Math.sin(ang)];
+  return { kind: 'arrow', closed: false, pts: inkArrowPoints(v[0], t, Math.max(head, 0.08 * shaft)) };
 }

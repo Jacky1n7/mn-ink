@@ -33,14 +33,17 @@ const harness = `<script>
   var z = 0.5;
   window.__fakeAddon = function (b) { fakeAddon(b); };
   setTimeout(function () { __pendingBatches.splice(0).forEach(fakeAddon); }, 0);
+  var SEL = { n: 2, x: 300, y: 300, w: 100, h: 60 };
   function fakeAddon(batch) {
     batch.msgs.forEach(function (m) {
       __sent.push(m);
-      if (m.t === 'ready') ink.init({ prefs: null, view: { ox: 100, oy: 50, z: z, minZ: 0.01, maxZ: 2 }, state: { canUndo: false, canRedo: false }, nodes: [400, 300] });
+      if (m.t === 'ready') ink.init({ prefs: null, view: { ox: 100, oy: 50, z: z, minZ: 0.01, maxZ: 2 }, state: { canUndo: false, canRedo: false }, nodes: [400, 300], surface: 'map', surfaces: { map: true, doc: true }, clip: false, storage: 'notebook' });
       if (m.t === 'view') ink.setView({ ox: view.ox, oy: view.oy, z: view.z });
       if (m.t === 'stroke') ink.committed({ lid: m.lid, ok: true, state: { canUndo: true, canRedo: false } });
-      if (m.t === 'lasso') ink.lassoResult({ n: 1, x: 100, y: 100, w: 100, h: 80, shape: { id: 'S1', closed: true, pts: [100, 100, 200, 100, 200, 180, 100, 180], color: '#d7262b', width: 2, alpha: 1, dash: false } });
+      if (m.t === 'lasso') ink.lassoResult(m.poly.length === 8 && m.poly[0] > 280 ? SEL : { n: 1, x: 100, y: 100, w: 100, h: 80, shape: { id: 'S1', closed: true, pts: [100, 100, 200, 100, 200, 180, 100, 180], color: '#d7262b', width: 2, alpha: 1, dash: false } });
       if (m.t === 'editEnd') ink.selection({ n: 1, x: 100, y: 100, w: 140, h: 80, shape: { id: 'S1', closed: true, pts: m.pts || [], color: '#d7262b', width: 2, alpha: 1, dash: false } });
+      if (m.t === 'xformEnd' || m.t === 'moveEnd') ink.selection(SEL);
+      if (m.t === 'copy') ink.clip(2);
     });
     ink.ack(batch.seq);
   }
@@ -93,9 +96,13 @@ const harness = `<script>
   });
   later(600, function () { out.snapped = active && active.shape && active.shape.kind; ev('pointermove', 330, 503); ev('pointermove', 360, 505); });
   later(30, function () { out.adjustedEnd = active && active.shape && active.shape.pts[1].map(Math.round); ev('pointerup', 360, 505); });
-  // 4. shape tool: rectangle recognised on lift, corner snaps to node (400,300 canvas → screen 100,100)
+  // 4. shape tool: rectangle recognised on lift, corner snaps to node (400,300 canvas → screen 100,100); then an arc
   later(50, function () { setTool('shape'); });
   later(30, function () { stroke([[103, 98], [200, 101], [201, 180], [99, 181], [101, 104]]); });
+  later(30, function () {
+    var arc = []; for (var i = 0; i <= 30; i++) { var a = Math.PI + i / 30 * Math.PI / 2; arc.push([600 + 80 * Math.cos(a), 400 + 80 * Math.sin(a)]); }
+    stroke(arc);
+  });
   // 5. eraser, partial mode
   later(50, function () { setTool('eraser'); prefs.eraserMode = 'partial'; });
   later(30, function () { stroke([[300, 280], [330, 340]]); });
@@ -103,18 +110,38 @@ const harness = `<script>
   later(50, function () { setTool('lasso'); });
   later(30, function () { stroke([[90, 90], [220, 90], [220, 200], [90, 200]]); });
   later(60, function () { out.selShape = !!(sel && sel.shape); stroke([[200, 100], [230, 100], [240, 101]], 'mouse'); });
-  // 7. finger pan + pinch
+  // 7. rectangle lasso → multi selection → rotate via handle, copy, paste by tapping
+  later(60, function () { clearSelection(true); prefs.lassoMode = 'rect'; });
+  later(30, function () { stroke([[290, 290], [350, 330], [420, 380]]); });
+  later(60, function () { out.multiSel = sel ? sel.n : null; var r = rotHandle(sel.box); stroke([[r[0], r[1]], [r[0] + 40, r[1] + 10], [r[0] + 80, r[1] + 40]], 'mouse'); });
+  later(60, function () { tapEl(document.getElementById('selCopy')); });
+  later(60, function () { clearSelection(true); stroke([[700, 600], [700.5, 600.5]], 'mouse'); });
+  later(60, function () { out.pasteShown = getComputedStyle(document.getElementById('pastebar')).display !== 'none'; tapEl(document.getElementById('pasteBtn')); });
+  // 8. laser sends nothing
+  later(60, function () { setTool('laser'); out.sentBeforeLaser = __sent.length; stroke([[100, 100], [200, 150], [300, 120]], 'mouse'); });
+  later(80, function () { out.laserSentNothing = __sent.filter(function (m) { return m.t === 'stroke' || m.t === 'erase'; }).length === __sent.slice(0, out.sentBeforeLaser).filter(function (m) { return m.t === 'stroke' || m.t === 'erase'; }).length; out.laserPoints = laser.length; });
+  // 9. finger pan + pinch
   later(60, function () {
+    setTool('pen');
     ev('pointerdown', 500, 500, 'touch'); ev('pointermove', 520, 530, 'touch'); ev('pointerup', 520, 530, 'touch');
     out.viewAfterPan = [Math.round(view.ox), Math.round(view.oy), view.z];
   });
-  // 8. every popover opens without throwing
+  // 10. every popover opens; palette hex input; size % slider
   later(60, function () {
-    ['pen', 'marker', 'shape', 'eraser', 'lasso'].forEach(function (k) { setTool(k); tapEl(toolBtn(k)); out['pop_' + k] = !!document.querySelector('.pop'); closePopover(); });
+    TOOLS.forEach(function (k) { setTool(k); tapEl(toolBtn(k)); out['pop_' + k] = !!document.querySelector('.pop'); closePopover(); });
     tapEl(toolBtn('grid')); out.pop_grid = !!document.querySelector('.pop'); closePopover();
     setTool('pen');
-    var sw = document.querySelector('.sw.on'); tapEl(sw); out.palette = !!document.querySelector('.palette'); closePopover();
-    var sz = document.querySelector('.size.on'); tapEl(sz); out.sizePop = !!document.querySelector('.slider'); closePopover();
+    var sw = document.querySelector('.sw.on'); tapEl(sw);
+    var hex = document.querySelector('.hexrow input[type=text]');
+    hex.value = '#12AB34'; hex.dispatchEvent(new Event('input'));
+    tapEl(document.querySelector('.hexrow .mini'));
+    out.hexApplied = prefs.penColors[prefs.penColor];
+    out.recent = prefs.recentColors.slice(0, 1);
+    var sz = document.querySelector('.size.on'); tapEl(sz);
+    var range = document.querySelector('.slider input'); range.value = 200; range.dispatchEvent(new Event('input'));
+    out.sizeAt200 = prefs.penSizes[prefs.penSize];
+    closePopover();
+    out.surfaceSwitch = !!document.querySelector('.surf');
   });
   run();
 })();

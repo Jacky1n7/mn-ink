@@ -40,7 +40,7 @@
   #live { touch-action: none; cursor: crosshair; }
   #live.c-none { cursor: none; }
   #live.c-default { cursor: default; }
-  button { font: inherit; color: inherit; }
+  button, input { font: inherit; color: inherit; }
 
   /* ---- toolbar ---------------------------------------------------------- */
   #bar {
@@ -71,6 +71,9 @@
   .colors { width: 176px; }
   .sizes { width: 108px; }
   .hint { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .surf { display: flex; background: var(--hover); border-radius: 10px; padding: 2px; margin-right: 4px; flex: none; }
+  .surf button { border: 0; background: transparent; height: 30px; padding: 0 9px; border-radius: 8px; font-size: 12px; }
+  .surf button.on { background: var(--pop); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15); font-weight: 600; }
   .sw {
     width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; margin: 0 3px; flex: none;
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.16);
@@ -114,20 +117,30 @@
   .toggle.on::after { left: 18px; }
   .slider { display: flex; align-items: center; gap: 10px; }
   .slider input { flex: 1; accent-color: var(--accent); }
-  .slider output { width: 46px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+  .slider output { min-width: 78px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
   .palette { display: grid; grid-template-columns: repeat(7, 26px); gap: 8px; }
   .palette .sw { margin: 0; }
-  .custom { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-  .custom input[type=color] { width: 34px; height: 26px; border: 0; padding: 0; background: transparent; }
+  .hexrow { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  .hexrow .preview { width: 26px; height: 26px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.16); flex: none; }
+  .hexrow input[type=text] {
+    width: 96px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--hover);
+    padding: 0 8px; font-family: ui-monospace, "SF Mono", monospace; font-size: 13px; text-transform: uppercase;
+    -webkit-user-select: text; user-select: text;
+  }
+  .hexrow input[type=color] { width: 30px; height: 30px; border: 0; padding: 0; background: transparent; }
+  .mini { border: 0; height: 30px; padding: 0 12px; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; }
+  .checks { display: flex; gap: 6px; }
+  .checks button { flex: 1; border: 0; height: 30px; border-radius: 8px; background: var(--hover); font-size: 12.5px; }
+  .checks button.on { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); font-weight: 600; }
 
-  /* ---- selection bar / toast -------------------------------------------- */
-  #selbar {
+  /* ---- selection bar / paste / toast ------------------------------------- */
+  .float {
     position: fixed; display: none; gap: 2px; padding: 4px; border-radius: 12px; z-index: 5;
     background: var(--bar); border: 0.5px solid var(--line); box-shadow: var(--shadow);
   }
-  #selbar button { border: 0; background: transparent; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
-  #selbar button:active { background: var(--hover); }
-  #selbar button.danger { color: var(--danger); }
+  .float button { border: 0; background: transparent; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
+  .float button:active { background: var(--hover); }
+  .float button.danger { color: var(--danger); }
   #toast {
     position: fixed; left: 50%; top: 84px; transform: translateX(-50%); display: none; z-index: 20;
     padding: 8px 14px; border-radius: 10px; background: rgba(30, 30, 32, 0.88); color: #fff; font-size: 13px;
@@ -138,7 +151,8 @@
 <canvas id="grid"></canvas>
 <canvas id="live"></canvas>
 <div id="bar"></div>
-<div id="selbar"><button id="selCopy">复制</button><button id="selDelete" class="danger">删除</button><button id="selCancel">取消</button></div>
+<div id="selbar" class="float"><button id="selCopy">拷贝</button><button id="selCut">剪切</button><button id="selDup">再制</button><button id="selDelete" class="danger">删除</button><button id="selCancel">取消</button></div>
+<div id="pastebar" class="float"><button id="pasteBtn">粘贴</button></div>
 <div id="toast"></div>
 <script>
 'use strict';
@@ -155,27 +169,32 @@ var PALETTE = [
   '#ffd60a', '#7ee081', '#7cc4ff', '#ff9ec7', '#c4a7ff', '#ffb27a', '#b5f2ea'
 ];
 var DEFAULT_PREFS = {
-  tool: 'pen', brush: 'fountain', pressure: 1,
+  tool: 'pen', brush: 'fountain', pressureSens: 60,
   penColors: ['#1d1d1f', '#1f4fd1', '#d7262b', '#178a4c', '#7a3fe0'], penColor: 0,
   penSizes: [1.2, 2.2, 3.6], penSize: 1,
   markerColors: ['#ffd60a', '#7ee081', '#7cc4ff', '#ff9ec7'], markerColor: 0,
   markerSizes: [9, 15, 24], markerSize: 1, markerStraight: false,
+  recentColors: [],
   shapeDash: false,
   eraserMode: 'stroke', eraserMarkerOnly: false, eraserReturn: false, eraserSizes: [6, 12, 24], eraserSize: 1,
+  lassoMode: 'free', lassoTypes: { pen: true, marker: true, shape: true },
   snap: true, autoRadical: true, snapNodes: true,
   grid: 'none', gridSize: 1, gridSnap: true,
+  takeover: true, surface: 'map',
   barTop: false
 };
-var GRID_STEPS = [40, 64, 100];     // mind map units
-var PRESSURE_GAMMA = [1.4, 2, 3];   // 轻 / 中 / 重: how much light pressure is lifted
+var GRID_STEPS = [40, 64, 100];     // surface units
 var HOLD_MS = 450;                  // pen held still this long → snap to a shape
 var SNAP_PX = 11;
+var LASER_MS = 900;
 
 var prefs = JSON.parse(JSON.stringify(DEFAULT_PREFS));
 var view = { ox: 0, oy: 0, z: 1, minZ: 0.0006, maxZ: 2 };
 var serverView = null;
 var hist = { canUndo: false, canRedo: false };
-var nodesCanvas = [];               // snap targets (mind map units, flat)
+var nodesCanvas = [];               // snap targets (surface units, flat)
+var surface = 'map', surfaces = { map: true, doc: false };
+var hasClip = false;
 var prevTool = null;
 
 function merge(saved) {
@@ -183,7 +202,8 @@ function merge(saved) {
   for (var k in DEFAULT_PREFS) {
     if (!(k in saved)) continue;
     var d = DEFAULT_PREFS[k], v = saved[k];
-    if (Array.isArray(d) ? Array.isArray(v) && v.length === d.length : typeof v === typeof d) prefs[k] = v;
+    var ok = Array.isArray(d) ? Array.isArray(v) && (k === 'recentColors' || v.length === d.length) : typeof v === typeof d && v !== null;
+    if (ok) prefs[k] = v;
   }
   if (!INK_BRUSHES[prefs.brush] || prefs.brush === 'marker') prefs.brush = 'fountain';
 }
@@ -199,7 +219,7 @@ function send(m) {
   var last = queue[queue.length - 1];
   if (last && last.t === m.t && m.t === 'view') {
     last.dx += m.dx; last.dy += m.dy; last.s *= m.s; last.cx = m.cx; last.cy = m.cy;
-  } else if (last && last.t === m.t && (m.t === 'move' || m.t === 'scale')) {
+  } else if (last && last.t === m.t && (m.t === 'move' || m.t === 'xform')) {
     queue[queue.length - 1] = m;
   } else {
     queue.push(m);
@@ -244,7 +264,7 @@ function sendView(dx, dy, s, cx, cy) {
   view.oy = oy - dy;
   view.z = nz;
   drawGrid();
-  send({ t: 'view', dx: dx, dy: dy, s: s, cx: cx, cy: cy });
+  send({ t: 'view', dx: dx, dy: dy, s: nz / z, cx: cx, cy: cy });
 }
 
 function applyServerView() {
@@ -321,12 +341,14 @@ function drawGrid() {
 
 var active = null;          // stroke being drawn
 var pending = new Map();    // lid → finished stroke, shown until the native copy is on screen
-var lasso = null;           // { pts }
+var lasso = null;           // { pts, rect }
 var sel = null;             // selection, see ink.selection
 var eraser = null;          // { g, buf, sentAt }
 var cursor = null;          // eraser hover position
 var snapMark = null;        // [x, y] of the node / grid point just snapped to
 var predicted = [];         // predicted pen points (drawn, never stored)
+var laser = [];             // [{x, y, t, br}] laser trail (never stored)
+var laserRaf = 0;
 var lidSeq = 0;
 var drawQueued = false;
 
@@ -374,8 +396,47 @@ function drawStroke(s) {
   g.fillStyle = s.color;
   var pts = s.pts;
   if (s === active && predicted.length) pts = pts.concat(predicted);
-  fillOutline(INK_FREEHAND.getStroke(pts, inkFreehandOptions(s.brush, s.size, s.sim, !!s.done)));
+  fillOutline(INK_FREEHAND.getStroke(pts, inkFreehandOptions(s.brush, s.size, s.sim, !!s.done, s.ps)));
   g.globalAlpha = 1;
+}
+
+function drawLaser() {
+  if (!laser.length) return;
+  var now = performance.now();
+  g.save();
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  for (var pass = 0; pass < 2; pass++) {
+    for (var i = 1; i < laser.length; i++) {
+      var a = laser[i - 1], b = laser[i];
+      if (b.br) continue;
+      var life = 1 - (now - b.t) / LASER_MS;
+      if (life <= 0) continue;
+      g.globalAlpha = Math.min(1, life * 1.4);
+      g.beginPath();
+      g.moveTo(a.x, a.y);
+      g.lineTo(b.x, b.y);
+      if (pass === 0) {
+        g.strokeStyle = 'rgba(255, 45, 45, 0.55)';
+        g.lineWidth = 9;
+        g.shadowColor = 'rgba(255, 30, 30, 0.9)';
+        g.shadowBlur = 14;
+      } else {
+        g.strokeStyle = '#fff4f2';
+        g.lineWidth = 2.6;
+        g.shadowBlur = 0;
+      }
+      g.stroke();
+    }
+  }
+  g.restore();
+}
+
+function laserLoop() {
+  var now = performance.now();
+  laser = laser.filter(function (p) { return now - p.t < LASER_MS; });
+  draw();
+  laserRaf = laser.length || (penId !== null && prefs.tool === 'laser') ? requestAnimationFrame(laserLoop) : 0;
 }
 
 function draw() {
@@ -406,6 +467,7 @@ function draw() {
     g.stroke();
     g.restore();
   }
+  drawLaser();
   if (cursor && prefs.tool === 'eraser') {
     g.beginPath();
     g.arc(cursor[0], cursor[1], prefs.eraserSizes[prefs.eraserSize], 0, Math.PI * 2);
@@ -417,27 +479,52 @@ function draw() {
   }
 }
 
-function selBox() {
+// Box as currently dragged (move / scale / rotate preview).
+function selFrame() {
   var b = sel.box, d = sel.drag;
-  if (d && d.mode === 'move') return { x: b.x + d.dx, y: b.y + d.dy, w: b.w, h: b.h };
-  if (d && d.mode === 'scale') return { x: b.x, y: b.y, w: b.w * d.s, h: b.h * d.s };
-  return b;
+  var f = { x: b.x, y: b.y, w: b.w, h: b.h, rot: 0 };
+  if (d && d.mode === 'move') { f.x += d.dx; f.y += d.dy; }
+  if (d && d.mode === 'scale') { f.w *= d.s; f.h *= d.s; }
+  if (d && d.mode === 'rotate') f.rot = d.rot;
+  return f;
+}
+
+function rotHandle(b) {
+  return [b.x + b.w / 2, b.y - 34];
 }
 
 function drawSelection() {
-  var b = selBox();
+  var f = selFrame();
   var editing = sel.drag && sel.drag.mode === 'node';
   g.save();
+  if (f.rot) {
+    var cx = f.x + f.w / 2, cy = f.y + f.h / 2;
+    g.translate(cx, cy);
+    g.rotate(f.rot);
+    g.translate(-cx, -cy);
+  }
   g.setLineDash([6, 4]);
   g.lineWidth = 1.5;
   g.strokeStyle = '#0a84ff';
-  if (!editing) g.strokeRect(b.x - 6, b.y - 6, b.w + 12, b.h + 12);
+  if (!editing) g.strokeRect(f.x - 6, f.y - 6, f.w + 12, f.h + 12);
   g.setLineDash([]);
-  if (!sel.shape) {
-    // resize handle (bottom-right corner)
+  if (!sel.shape && !editing) {
+    // resize handle (bottom-right) and rotate handle (top centre)
     g.fillStyle = '#fff';
-    g.fillRect(b.x + b.w, b.y + b.h, 12, 12);
-    g.strokeRect(b.x + b.w, b.y + b.h, 12, 12);
+    g.fillRect(f.x + f.w, f.y + f.h, 12, 12);
+    g.strokeRect(f.x + f.w, f.y + f.h, 12, 12);
+    var r = rotHandle(f);
+    g.beginPath();
+    g.moveTo(r[0], f.y - 6);
+    g.lineTo(r[0], r[1] + 7);
+    g.stroke();
+    g.beginPath();
+    g.arc(r[0], r[1], 7, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+    g.beginPath();
+    g.arc(r[0], r[1], 3.2, -0.4, Math.PI * 1.4);
+    g.stroke();
   }
   g.restore();
   if (sel.shape && (!sel.drag || editing)) {
@@ -498,7 +585,7 @@ function pressureOf(e) {
   if (e.pointerType !== 'pen') return 0.5;
   var p = e.pressure || 0;
   // Pencil reports light writing as ~0.1–0.4; lift it so normal writing is not hairline.
-  p = 1 - Math.pow(1 - p, PRESSURE_GAMMA[prefs.pressure] || 2);
+  p = 1 - (1 - p) * (1 - p);
   return Math.max(0.05, Math.min(1, p));
 }
 
@@ -524,6 +611,7 @@ function clearSelection(notify) {
 
 cv.addEventListener('pointerdown', function (e) {
   e.preventDefault();
+  hidePaste();
   if (popover) {
     closePopover();
     return;
@@ -590,6 +678,7 @@ cv.addEventListener('pointerleave', function () { if (cursor && penId === null) 
 // Trackpad (Mac): two-finger scroll pans, pinch zooms.
 cv.addEventListener('wheel', function (e) {
   e.preventDefault();
+  hidePaste();
   if (sel) clearSelection(true);
   if (e.ctrlKey) sendView(0, 0, Math.exp(-e.deltaY / 120), e.clientX, e.clientY);
   else sendView(-e.deltaX, -e.deltaY, 1, e.clientX, e.clientY);
@@ -603,17 +692,22 @@ document.addEventListener('gesturechange', function (e) {
 });
 
 document.addEventListener('keydown', function (e) {
+  if (e.target && e.target.tagName === 'INPUT') return;
   var k = e.key.toLowerCase();
-  if ((e.metaKey || e.ctrlKey) && k === 'z') { e.preventDefault(); send({ t: e.shiftKey ? 'redo' : 'undo' }); }
-  else if ((e.metaKey || e.ctrlKey) && k === 'd' && sel) { e.preventDefault(); send({ t: 'duplicate' }); }
+  var cmd = e.metaKey || e.ctrlKey;
+  if (cmd && k === 'z') { e.preventDefault(); send({ t: e.shiftKey ? 'redo' : 'undo' }); }
+  else if (cmd && k === 'd' && sel) { e.preventDefault(); send({ t: 'duplicate' }); }
+  else if (cmd && k === 'c' && sel) { e.preventDefault(); send({ t: 'copy' }); }
+  else if (cmd && k === 'x' && sel) { e.preventDefault(); send({ t: 'cut' }); }
+  else if (cmd && k === 'v' && hasClip) { e.preventDefault(); send({ t: 'paste', x: W / 2, y: H / 2 }); }
   else if (k === 'escape') {
     e.preventDefault();
     if (popover) closePopover();
     else if (sel) clearSelection(true);
     else send({ t: 'close' });
   } else if ((k === 'backspace' || k === 'delete') && sel) { e.preventDefault(); send({ t: 'deleteSel' }); }
-  else if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-    var map = { p: 'pen', h: 'marker', s: 'shape', e: 'eraser', l: 'lasso' };
+  else if (!cmd && !e.altKey) {
+    var map = { p: 'pen', h: 'marker', s: 'shape', e: 'eraser', l: 'lasso', k: 'laser' };
     if (map[k]) setTool(map[k]);
     if (k === 'g') {
       var order = ['none', 'square', 'dot', 'ruled'];
@@ -640,7 +734,7 @@ function startTool(e) {
     if (sel) clearSelection(true);
     var st = penStyle(tool);
     active = {
-      lid: ++lidSeq, tool: tool, brush: st.brush, color: st.color, size: st.size,
+      lid: ++lidSeq, tool: tool, brush: st.brush, color: st.color, size: st.size, ps: prefs.pressureSens / 100,
       sim: e.pointerType !== 'pen' || tool === 'marker',
       dash: tool === 'shape' && prefs.shapeDash,
       pts: [[x, y, pressureOf(e)]], shape: null, base: null, p0: null, still: [x, y]
@@ -653,6 +747,9 @@ function startTool(e) {
     flushEraser(true);
   } else if (tool === 'lasso') {
     startLasso(x, y);
+  } else if (tool === 'laser') {
+    laser.push({ x: x, y: y, t: performance.now(), br: true });
+    if (!laserRaf) laserRaf = requestAnimationFrame(laserLoop);
   }
 }
 
@@ -670,10 +767,19 @@ function startLasso(x, y) {
           return;
         }
       }
-    } else if (x >= b.x + b.w - 4 && x <= b.x + b.w + 18 && y >= b.y + b.h - 4 && y <= b.y + b.h + 18) {
-      sel.drag = { mode: 'scale', ax: b.x, ay: b.y, w0: Math.max(4, b.w), h0: Math.max(4, b.h), s: 1 };
-      showSelBar();
-      return;
+    } else {
+      var r = rotHandle(b);
+      if (Math.hypot(x - r[0], y - r[1]) <= 16) {
+        var cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+        sel.drag = { mode: 'rotate', cx: cx, cy: cy, a0: Math.atan2(y - cy, x - cx), rot: 0 };
+        showSelBar();
+        return;
+      }
+      if (x >= b.x + b.w - 4 && x <= b.x + b.w + 18 && y >= b.y + b.h - 4 && y <= b.y + b.h + 18) {
+        sel.drag = { mode: 'scale', ax: b.x, ay: b.y, w0: Math.max(4, b.w), h0: Math.max(4, b.h), s: 1 };
+        showSelBar();
+        return;
+      }
     }
     if (x >= b.x - 10 && x <= b.x + b.w + 10 && y >= b.y - 10 && y <= b.y + b.h + 10) {
       sel.drag = { mode: 'move', x0: x, y0: y, dx: 0, dy: 0 };
@@ -682,7 +788,7 @@ function startLasso(x, y) {
     }
     clearSelection(true);
   }
-  lasso = { pts: [[x, y]] };
+  lasso = { pts: [[x, y]], rect: prefs.lassoMode === 'rect', x0: x, y0: y };
 }
 
 function moveTool(e) {
@@ -692,7 +798,7 @@ function moveTool(e) {
       // Hold, then drag: fine-tune the recognised shape.
       var p = [x, y];
       var k = active.base.kind;
-      if (k === 'line' || k === 'polyline') p = snapOne(p);
+      if (k === 'line' || k === 'polyline' || k === 'arrow') p = snapOne(p);
       active.shape = inkAdjustShape(active.base, active.p0, p);
       return;
     }
@@ -707,7 +813,10 @@ function moveTool(e) {
     eraser.buf.push([x, y]);
     flushEraser(false);
   } else if (lasso) {
-    lasso.pts.push([x, y]);
+    if (lasso.rect) lasso.pts = [[lasso.x0, lasso.y0], [x, lasso.y0], [x, y], [lasso.x0, y]];
+    else lasso.pts.push([x, y]);
+  } else if (prefs.tool === 'laser' && penId !== null) {
+    laser.push({ x: x, y: y, t: performance.now() });
   } else if (sel && sel.drag) {
     var d = sel.drag;
     if (d.mode === 'move') {
@@ -717,7 +826,11 @@ function moveTool(e) {
     } else if (d.mode === 'scale') {
       // Uniform scale from the top-left corner (aspect ratio kept).
       d.s = Math.max(0.1, ((x - d.ax) / d.w0 + (y - d.ay) / d.h0) / 2);
-      send({ t: 'scale', sx: d.s, sy: d.s, ax: d.ax, ay: d.ay });
+      send({ t: 'xform', sx: d.s, sy: d.s, rot: 0, ax: d.ax, ay: d.ay });
+    } else if (d.mode === 'rotate') {
+      var rot = Math.atan2(y - d.cy, x - d.cx) - d.a0;
+      d.rot = inkSnapAngle(rot, Math.PI / 4, (4 * Math.PI) / 180);
+      send({ t: 'xform', sx: 1, sy: 1, rot: d.rot, ax: d.cx, ay: d.cy });
     } else if (d.mode === 'node') {
       sel.editPts[d.i] = snapOne([x, y], sel.shape.nodes);
     }
@@ -744,6 +857,11 @@ function round(n) {
   return Math.round(n * 10) / 10;
 }
 
+function rememberColor(c) {
+  c = c.toLowerCase();
+  prefs.recentColors = [c].concat(prefs.recentColors.filter(function (x) { return x !== c; })).slice(0, 7);
+}
+
 function commitStroke(s) {
   var flat = [];
   if (s.shape) {
@@ -755,8 +873,8 @@ function commitStroke(s) {
   s.done = true;
   pending.set(s.lid, s);
   send({
-    t: 'stroke', lid: s.lid, tool: s.tool === 'marker' ? 'marker' : 'pen', b: s.brush, color: s.color, size: s.size, sim: s.sim,
-    shape: !!s.shape, closed: !!(s.shape && s.shape.closed), dash: !!(s.shape && s.dash), pts: flat
+    t: 'stroke', lid: s.lid, tool: s.tool === 'marker' ? 'marker' : 'pen', b: s.brush, color: s.color, size: s.size,
+    ps: s.shape ? null : s.ps, sim: s.sim, shape: !!s.shape, closed: !!(s.shape && s.shape.closed), dash: !!(s.shape && s.dash), pts: flat
   });
 }
 
@@ -777,13 +895,20 @@ function endTool(e, cancelled) {
   } else if (eraser) {
     flushEraser(true);
     eraser = null;
+    send({ t: 'eraseEnd' });
     if (e.pointerType !== 'mouse') cursor = null;
     if (prefs.eraserReturn && prevTool) setTool(prevTool);
   } else if (lasso) {
-    var poly = [];
-    lasso.pts.forEach(function (p) { poly.push(round(p[0]), round(p[1])); });
+    var l = lasso;
     lasso = null;
-    if (!cancelled && poly.length >= 6) send({ t: 'lasso', poly: poly });
+    var span = l.rect ? Math.hypot(l.pts[2] ? l.pts[2][0] - l.x0 : 0, l.pts[2] ? l.pts[2][1] - l.y0 : 0) : inkPathLength(l.pts);
+    if (!cancelled && span < 6) {
+      if (hasClip) showPaste(l.x0, l.y0);
+      return;
+    }
+    var poly = [];
+    l.pts.forEach(function (p) { poly.push(round(p[0]), round(p[1])); });
+    if (!cancelled && poly.length >= 6) send({ t: 'lasso', poly: poly, types: prefs.lassoTypes });
   } else if (sel && sel.drag) {
     var d = sel.drag;
     sel.drag = null;
@@ -792,7 +917,9 @@ function endTool(e, cancelled) {
       sel.box = { x: sel.box.x + d.dx, y: sel.box.y + d.dy, w: sel.box.w, h: sel.box.h };
       send({ t: 'moveEnd', dx: cancelled ? 0 : d.dx, dy: cancelled ? 0 : d.dy });
     } else if (d.mode === 'scale') {
-      send({ t: 'scaleEnd', sx: cancelled ? 1 : d.s, sy: cancelled ? 1 : d.s, ax: d.ax, ay: d.ay });
+      send({ t: 'xformEnd', sx: cancelled ? 1 : d.s, sy: cancelled ? 1 : d.s, rot: 0, ax: d.ax, ay: d.ay });
+    } else if (d.mode === 'rotate') {
+      send({ t: 'xformEnd', sx: 1, sy: 1, rot: cancelled ? 0 : d.rot, ax: d.cx, ay: d.cy });
     } else if (d.mode === 'node') {
       var flat = [];
       sel.editPts.forEach(function (p) { flat.push(round(p[0]), round(p[1])); });
@@ -801,6 +928,8 @@ function endTool(e, cancelled) {
       sel.editPts = null;
     }
     showSelBar();
+  } else if (prefs.tool === 'laser') {
+    if (!laserRaf) laserRaf = requestAnimationFrame(laserLoop);
   }
 }
 
@@ -836,11 +965,16 @@ var ICONS = {
   shape: SVG('<rect x="3.5" y="11.5" width="9" height="9" rx="1.2"/><circle cx="15.5" cy="8.5" r="5"/>'),
   eraser: SVG('<path d="M8.4 20L3.8 15.4a1.6 1.6 0 010-2.3l9.3-9.3a1.6 1.6 0 012.3 0l4.9 4.9a1.6 1.6 0 010 2.3L12 20z"/><path d="M8.4 20H20.5"/><path d="M8.6 8.4l7 7"/>'),
   lasso: SVG('<path d="M12 4c4.9 0 8.3 2.4 8.3 5.4S16.9 14.8 12 14.8 3.7 12.4 3.7 9.4 7.1 4 12 4z" stroke-dasharray="2.4 2.6"/><path d="M7.2 13.4c-1.2 1.5-.8 3.4 1.1 4.3 1.4.7 2 1.9 1.4 3.4"/>'),
+  laser: SVG('<path d="M4 20l7.5-7.5"/><circle cx="15.5" cy="8.5" r="2.6" fill="#ff3b30" stroke="#ff3b30"/><path d="M15.5 2.5v2M15.5 12.5v2M21.5 8.5h-2M11.5 8.5h-2M19.7 4.3l-1.4 1.4M12.7 11.3l-1.4 1.4M19.7 12.7l-1.4-1.4M12.7 5.7l-1.4-1.4" stroke="#ff3b30" stroke-width="1.3"/>'),
   grid: SVG('<rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M9.2 3.5v17M14.8 3.5v17M3.5 9.2h17M3.5 14.8h17" opacity=".7"/>'),
   undo: SVG('<path d="M8.6 6.5L4.5 10.6l4.1 4.1"/><path d="M4.8 10.6h9.4a5.3 5.3 0 010 10.6h-2.4"/>', ' stroke-width="1.8"'),
   redo: SVG('<path d="M15.4 6.5l4.1 4.1-4.1 4.1"/><path d="M19.2 10.6H9.8a5.3 5.3 0 000 10.6h2.4"/>', ' stroke-width="1.8"')
 };
-var TITLES = { pen: '笔 (P)', marker: '荧光笔 (H)', shape: '图形 (S)', eraser: '橡皮擦 (E)', lasso: '套索 (L)', grid: '书写背景 (G)', undo: '撤销 ⌘Z', redo: '重做 ⇧⌘Z' };
+var TITLES = {
+  pen: '笔 (P)', marker: '荧光笔 (H)', shape: '图形 (S)', eraser: '橡皮擦 (E)', lasso: '套索 (L)', laser: '激光笔 (K)',
+  grid: '书写背景 (G)', undo: '撤销（与 MarginNote 共用）⌘Z', redo: '重做 ⇧⌘Z'
+};
+var TOOLS = ['pen', 'marker', 'shape', 'eraser', 'lasso', 'laser'];
 
 var bar = document.getElementById('bar');
 
@@ -857,13 +991,18 @@ function tap(node, fn) {
   node.addEventListener('pointerup', function (e) { e.stopPropagation(); e.preventDefault(); fn(e); });
 }
 
+function cursorClass(t) {
+  return t === 'eraser' ? 'c-none' : (t === 'lasso' ? 'c-default' : '');
+}
+
 function setTool(t) {
   if (prefs.tool === t) return;
   if (sel && t !== 'lasso') clearSelection(true);
   if (t === 'eraser') prevTool = prefs.tool;
   prefs.tool = t;
   cursor = null;
-  cv.className = t === 'eraser' ? 'c-none' : (t === 'lasso' ? 'c-default' : '');
+  cv.className = cursorClass(t);
+  hidePaste();
   closePopover();
   savePrefs();
   renderBar();
@@ -889,10 +1028,26 @@ function renderBar() {
   tap(grip, function () { prefs.barTop = !prefs.barTop; savePrefs(); closePopover(); renderBar(); showSelBar(); });
   bar.appendChild(grip);
 
-  ['pen', 'marker', 'shape', 'eraser', 'lasso'].forEach(function (t) {
+  if (surfaces.map && surfaces.doc) {
+    var sw = el('div', 'surf');
+    [['map', '脑图'], ['doc', 'PDF']].forEach(function (o) {
+      var b = el('button', surface === o[0] ? 'on' : '');
+      b.textContent = o[1];
+      tap(b, function () {
+        if (surface === o[0]) return;
+        prefs.surface = o[0];
+        send({ t: 'prefs', prefs: prefs });
+        send({ t: 'surface', kind: o[0] });
+      });
+      sw.appendChild(b);
+    });
+    bar.appendChild(sw);
+  }
+
+  TOOLS.forEach(function (t) {
     var icon = typeof ICONS[t] === 'function' ? ICONS[t](toolColor(t)) : ICONS[t];
     var b = el('button', 'btn tool' + (prefs.tool === t ? ' on' : ''), icon);
-    b.title = TITLES[t] + (t !== 'lasso' ? ' · 再点一次打开设置' : '');
+    b.title = TITLES[t] + (t !== 'laser' ? ' · 再点一次打开设置' : '');
     b.dataset.key = t;
     tap(b, function () {
       if (prefs.tool === t) togglePopover(t, b);
@@ -925,9 +1080,11 @@ function renderBar() {
     });
   } else {
     var hint = el('span', 'hint');
-    hint.textContent = tool === 'eraser'
-      ? (prefs.eraserMode === 'partial' ? '局部擦除' : '整笔擦除') + (prefs.eraserMarkerOnly ? ' · 只擦荧光笔' : '')
-      : '圈选后：拖动 · 拉角缩放 · 拖节点';
+    hint.textContent = {
+      eraser: (prefs.eraserMode === 'partial' ? '局部擦除' : '整笔擦除') + (prefs.eraserMarkerOnly ? ' · 只擦荧光笔' : ''),
+      lasso: '碰到就选中 · 拖动 · 缩放 · 旋转',
+      laser: '激光笔：演示用，松手后自动消失'
+    }[tool] || '';
     cg.appendChild(hint);
   }
   bar.appendChild(cg);
@@ -1066,16 +1223,17 @@ function toggleRow(label, sub, key, after) {
   return row;
 }
 
-function slider(min, max, step, value, unit, onInput) {
+function slider(min, max, step, value, fmt, onInput) {
   var wrap = el('div', 'slider');
   var input = el('input');
   input.type = 'range';
   input.min = min; input.max = max; input.step = step; input.value = value;
   var out = el('output');
-  out.textContent = value + unit;
+  out.textContent = fmt(value);
   input.addEventListener('input', function () {
-    out.textContent = input.value + unit;
-    onInput(parseFloat(input.value));
+    var v = parseFloat(input.value);
+    out.textContent = fmt(v);
+    onInput(v);
   });
   wrap.appendChild(input);
   wrap.appendChild(out);
@@ -1099,7 +1257,7 @@ function brushPreview(brush) {
     // light → heavy → light, the way a quick flourish is written
     pts.push([10 + t * 92, 15 + Math.sin(t * Math.PI * 2) * 7, 0.08 + 0.92 * Math.pow(Math.sin(t * Math.PI), 1.5)]);
   }
-  var o = INK_FREEHAND.getStroke(pts, inkFreehandOptions(brush, 4.6, false, true));
+  var o = INK_FREEHAND.getStroke(pts, inkFreehandOptions(brush, 4.6, false, true, prefs.pressureSens / 100));
   x.globalAlpha = inkBrushAlpha(brush);
   var c0 = prefs.penColors[prefs.penColor];
   x.fillStyle = c0.toLowerCase() === '#ffffff' ? '#1d1d1f' : c0;
@@ -1115,7 +1273,7 @@ function brushPreview(brush) {
 
 function buildPenPop() {
   var n = el('div');
-  n.style.width = '272px';
+  n.style.width = '284px';
   n.appendChild(h4('笔型'));
   var grid = el('div', 'brushes');
   ['fountain', 'ballpoint', 'brush', 'pencil'].forEach(function (b) {
@@ -1128,12 +1286,23 @@ function buildPenPop() {
     grid.appendChild(card);
   });
   n.appendChild(grid);
-  n.appendChild(h4('压感（Apple Pencil）'));
-  n.appendChild(seg([[0, '轻'], [1, '中'], [2, '重']], prefs.pressure, function (v) { prefs.pressure = v; savePrefs(); refreshPop(); }));
+  n.appendChild(h4('压感灵敏度（Apple Pencil）'));
+  var previewTimer = 0;
+  n.appendChild(slider(0, 100, 5, prefs.pressureSens, function (v) { return v + '%'; }, function (v) {
+    prefs.pressureSens = v;
+    savePrefs();
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(function () {
+      var cards = n.querySelectorAll('.brush canvas');
+      ['fountain', 'ballpoint', 'brush', 'pencil'].forEach(function (b, i) { cards[i].replaceWith(brushPreview(b)); });
+    }, 60);
+  }));
   n.appendChild(h4('书写辅助'));
   n.appendChild(toggleRow('画完按住 → 规整图形', '停顿后继续拖动可微调大小和方向', 'snap'));
   n.appendChild(toggleRow('根号 √ 自动整齐', '写完自动变成规整的根号', 'autoRadical'));
   n.appendChild(toggleRow('吸附到图形节点', '端点、角点自动对齐', 'snapNodes'));
+  n.appendChild(h4('与 MarginNote 融合'));
+  n.appendChild(toggleRow('接管 MN 自带的书写按钮', '点 MN 的笔也会打开 MN Ink；书写时自动关掉 MN 的笔', 'takeover'));
   return n;
 }
 
@@ -1150,12 +1319,12 @@ function buildMarkerPop() {
 
 function buildShapePop() {
   var n = el('div');
-  n.style.width = '262px';
+  n.style.width = '268px';
   n.appendChild(h4('线型'));
   n.appendChild(seg([[false, '实线'], [true, '虚线（辅助线）']], prefs.shapeDash, function (v) { prefs.shapeDash = v; savePrefs(); refreshPop(); }));
   n.appendChild(h4('图形工具'));
   var tip = el('span', 'hint');
-  tip.textContent = '每一笔自动识别成直线、圆、椭圆、矩形、三角形、多边形、折线或根号；画完按住不放再拖动，可调整大小和方向。';
+  tip.textContent = '每一笔自动识别成直线、箭头、圆弧、圆、椭圆、矩形、三角形、多边形、折线或根号；画完按住不放再拖动，可调整大小、方向和弧长。';
   n.appendChild(tip);
   n.appendChild(h4('吸附'));
   n.appendChild(toggleRow('吸附到图形节点', '', 'snapNodes'));
@@ -1178,10 +1347,28 @@ function buildEraserPop() {
 
 function buildLassoPop() {
   var n = el('div');
-  n.style.width = '250px';
-  n.appendChild(h4('套索'));
+  n.style.width = '268px';
+  n.appendChild(h4('套索方式'));
+  n.appendChild(seg([['free', '手绘套索'], ['rect', '矩形框选']], prefs.lassoMode, function (v) { prefs.lassoMode = v; savePrefs(); refreshPop(); }));
+  n.appendChild(h4('选择对象'));
+  var checks = el('div', 'checks');
+  [['pen', '手写'], ['marker', '荧光笔'], ['shape', '图形']].forEach(function (o) {
+    var b = el('button', prefs.lassoTypes[o[0]] ? 'on' : '');
+    b.textContent = o[1];
+    tap(b, function () {
+      var next = JSON.parse(JSON.stringify(prefs.lassoTypes));
+      next[o[0]] = !next[o[0]];
+      if (!next.pen && !next.marker && !next.shape) return;
+      prefs.lassoTypes = next;
+      savePrefs();
+      refreshPop();
+    });
+    checks.appendChild(b);
+  });
+  n.appendChild(checks);
   var tip = el('span', 'hint');
-  tip.textContent = '圈住笔迹即可选中。拖动框内移动，拖右下角缩放；只选中一个图形时可以直接拖它的节点。点颜色可以改色，⌘D 复制，Delete 删除。';
+  tip.style.marginTop = '12px';
+  tip.textContent = '套索碰到笔迹的任何一点就会选中。拖框内移动，拖右下角缩放，拖上方圆点旋转；只选中一个图形时可拖它的节点。轻点空白处可粘贴。';
   n.appendChild(tip);
   return n;
 }
@@ -1202,49 +1389,107 @@ function buildGridPop() {
   return n;
 }
 
+// Size as a percentage of the preset's default (100% = the factory size).
 function openSizePop(listKey, i, anchor) {
   var n = el('div');
-  n.style.width = '240px';
-  var ranges = { penSizes: [0.4, 10, 0.1], markerSizes: [4, 44, 1], eraserSizes: [3, 50, 1] };
-  var r = ranges[listKey];
+  n.style.width = '268px';
+  var base = DEFAULT_PREFS[listKey][i];
+  var pct = Math.round((prefs[listKey][i] / base) * 100);
   n.appendChild(h4('粗细 · 第 ' + (i + 1) + ' 档'));
-  n.appendChild(slider(r[0], r[1], r[2], prefs[listKey][i], ' pt', function (v) {
-    prefs[listKey][i] = v;
+  n.appendChild(slider(10, 400, 5, pct, function (v) {
+    var pt = (base * v) / 100;
+    return v + '% · ' + (pt < 10 ? pt.toFixed(1) : Math.round(pt)) + 'pt';
+  }, function (v) {
+    prefs[listKey][i] = Math.round(((base * v) / 100) * 100) / 100;
     savePrefs();
   }));
+  var reset = el('button', 'mini');
+  reset.textContent = '恢复 100%';
+  reset.style.marginTop = '10px';
+  tap(reset, function () { prefs[listKey][i] = base; savePrefs(); openSizePop(listKey, i, anchor); });
+  n.appendChild(reset);
   openPop('size', anchor, n);
+}
+
+function normHex(v) {
+  v = String(v || '').trim().replace(/^#/, '');
+  if (/^[0-9a-f]{3}$/i.test(v)) v = v.split('').map(function (c) { return c + c; }).join('');
+  return /^[0-9a-f]{6}$/i.test(v) ? '#' + v.toLowerCase() : null;
 }
 
 function openPalette(listKey, i, anchor) {
   var n = el('div');
   n.style.width = '264px';
-  n.appendChild(h4('颜色'));
-  var grid = el('div', 'palette');
-  PALETTE.forEach(function (c) {
-    var b = el('button', 'sw' + (prefs[listKey][i].toLowerCase() === c ? ' on' : ''));
-    b.style.background = c;
-    tap(b, function () { prefs[listKey][i] = c; savePrefs(); renderBar(); closePopover(); });
-    grid.appendChild(b);
+  function pick(c) {
+    prefs[listKey][i] = c;
+    rememberColor(c);
+    savePrefs();
+    renderBar();
+  }
+  function swatches(list, title) {
+    if (!list.length) return;
+    n.appendChild(h4(title));
+    var grid = el('div', 'palette');
+    list.forEach(function (c) {
+      var b = el('button', 'sw' + (prefs[listKey][i].toLowerCase() === c ? ' on' : ''));
+      b.style.background = c;
+      b.title = c.toUpperCase();
+      tap(b, function () { pick(c); closePopover(); });
+      grid.appendChild(b);
+    });
+    n.appendChild(grid);
+  }
+  swatches(prefs.recentColors, '最近使用');
+  swatches(PALETTE, '颜色');
+  n.appendChild(h4('16 进制 / 自定义'));
+  var row = el('div', 'hexrow');
+  var preview = el('span', 'preview');
+  preview.style.background = prefs[listKey][i];
+  var hex = el('input');
+  hex.type = 'text';
+  hex.maxLength = 7;
+  hex.value = prefs[listKey][i].toUpperCase();
+  hex.spellcheck = false;
+  hex.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+  hex.addEventListener('input', function () {
+    var c = normHex(hex.value);
+    if (c) preview.style.background = c;
   });
-  n.appendChild(grid);
-  var custom = el('div', 'custom');
-  var input = el('input');
-  input.type = 'color';
-  input.value = prefs[listKey][i];
-  input.addEventListener('input', function () { prefs[listKey][i] = input.value; savePrefs(); renderBar(); });
-  var label = el('span', 'hint');
-  label.textContent = '自定义颜色';
-  custom.appendChild(input);
-  custom.appendChild(label);
-  n.appendChild(custom);
+  hex.addEventListener('keydown', function (e) {
+    e.stopPropagation();
+    if (e.key === 'Enter') apply.dispatchEvent(new PointerEvent('pointerup'));
+  });
+  var apply = el('button', 'mini');
+  apply.textContent = '使用';
+  tap(apply, function () {
+    var c = normHex(hex.value);
+    if (!c) { toast('请输入 6 位 16 进制颜色，例如 #1F4FD1'); return; }
+    pick(c);
+    closePopover();
+  });
+  var wheel = el('input');
+  wheel.type = 'color';
+  wheel.value = prefs[listKey][i];
+  wheel.addEventListener('input', function () {
+    hex.value = wheel.value.toUpperCase();
+    preview.style.background = wheel.value;
+  });
+  wheel.addEventListener('change', function () { pick(wheel.value.toLowerCase()); });
+  row.appendChild(preview);
+  row.appendChild(hex);
+  row.appendChild(wheel);
+  row.appendChild(apply);
+  n.appendChild(row);
   openPop('palette', anchor, n);
 }
 
 // ===========================================================================
-// Selection bar / toast
+// Selection bar / paste / toast
 // ===========================================================================
 var selbar = document.getElementById('selbar');
-tap(document.getElementById('selCopy'), function () { send({ t: 'duplicate' }); });
+tap(document.getElementById('selCopy'), function () { send({ t: 'copy' }); });
+tap(document.getElementById('selCut'), function () { send({ t: 'cut' }); });
+tap(document.getElementById('selDup'), function () { send({ t: 'duplicate' }); });
 tap(document.getElementById('selDelete'), function () { send({ t: 'deleteSel' }); });
 tap(document.getElementById('selCancel'), function () { clearSelection(true); });
 
@@ -1255,11 +1500,30 @@ function showSelBar() {
   }
   var b = sel.box;
   selbar.style.display = 'flex';
-  var x = Math.max(8, Math.min(W - 200, b.x));
-  var y = b.y - 52;
+  var x = Math.max(8, Math.min(W - 300, b.x));
+  var y = b.y - 92;
   if (y < 8) y = b.y + b.h + 22;
   selbar.style.left = x + 'px';
   selbar.style.top = y + 'px';
+}
+
+var pastebar = document.getElementById('pastebar');
+var pasteAt = null;
+tap(document.getElementById('pasteBtn'), function () {
+  if (pasteAt) send({ t: 'paste', x: pasteAt[0], y: pasteAt[1] });
+  hidePaste();
+});
+
+function showPaste(x, y) {
+  pasteAt = [x, y];
+  pastebar.style.display = 'flex';
+  pastebar.style.left = Math.max(8, x - 28) + 'px';
+  pastebar.style.top = Math.max(8, y - 50) + 'px';
+}
+
+function hidePaste() {
+  pastebar.style.display = 'none';
+  pasteAt = null;
 }
 
 var toastTimer = 0;
@@ -1268,7 +1532,7 @@ function toast(text) {
   t.textContent = text;
   t.style.display = 'block';
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function () { t.style.display = 'none'; }, 1600);
+  toastTimer = setTimeout(function () { t.style.display = 'none'; }, 1800);
 }
 
 // ===========================================================================
@@ -1298,9 +1562,13 @@ window.ink = {
     }
     hist = o.state || hist;
     nodesCanvas = o.nodes || [];
-    cv.className = prefs.tool === 'eraser' ? 'c-none' : (prefs.tool === 'lasso' ? 'c-default' : '');
+    surface = o.surface || 'map';
+    surfaces = o.surfaces || surfaces;
+    hasClip = !!o.clip;
+    cv.className = cursorClass(prefs.tool);
     renderBar();
     drawGrid();
+    if (o.storage === 'file') toast('提示：没找到可复用的隐藏笔记，笔迹暂存在本机文件里');
   },
   setView: function (v) {
     serverView = v;
@@ -1308,6 +1576,10 @@ window.ink = {
   },
   nodes: function (n) {
     nodesCanvas = n || [];
+  },
+  clip: function (n) {
+    hasClip = n > 0;
+    if (n) toast('已拷贝 ' + n + ' 笔，轻点空白处可粘贴');
   },
   committed: function (o) {
     if (o.state) ink.state(o.state);

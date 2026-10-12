@@ -1,27 +1,24 @@
 // ---------------------------------------------------------------------------
-// Editing operations: add, erase (whole stroke / partial / highlighter only),
-// lasso select / move / resize / recolor / duplicate / delete, shape node
-// editing, undo and redo. Input points arrive in overlay (screen) coordinates.
+// Editing operations on the surface the overlay is on: add, erase (whole
+// stroke / partial / highlighter only), lasso select (anything it touches) /
+// move / resize / rotate / recolor / copy / cut / paste / delete, shape node
+// editing. Input points arrive in overlay (screen) coordinates.
 //
-// Every change is an op {add: [strokes], remove: [strokes]}; undo applies the
-// inverse. Moving, resizing or recoloring = remove the old copies + add new
-// ones with the same ids. Eraser gestures merge into one op ({g: gesture id}).
+// Changes are applied in memory at once and written to the notebook by
+// inkCommit(label) — one step in MarginNote's own undo history. Undo / redo
+// call MarginNote's UndoManager and reload the ink from the notebook.
 // ---------------------------------------------------------------------------
 
-var INK_UNDO = [];
-var INK_REDO = [];
-var INK_SEL = null; // { ids: [...] }
-var INK_HIDDEN = null; // stroke id hidden while the page previews an edit
+var INK_SEL = null;      // { ids: [...] }
+var INK_HIDDEN = null;   // stroke id hidden while the page previews a node edit
+var INK_CLIP = null;     // copied strokes, in screen units around their centre
 
 function inkResetHistory() {
-  INK_UNDO = [];
-  INK_REDO = [];
   INK_SEL = null;
 }
 
 function inkView(views) {
-  var off = views.sv.contentOffset;
-  return { ox: off.x, oy: off.y, z: views.sv.zoomScale };
+  return inkSurfView(views.active);
 }
 
 function inkToCanvas(v, x, y) {
@@ -32,16 +29,14 @@ function inkToScreen(v, x, y) {
   return [x * v.z - v.ox, y * v.z - v.oy];
 }
 
-// Origin of a stroke's group, or null when its card is not on screen.
+// Placement of a stroke's group, or null when it is not on screen.
 function inkOrigin(s) {
-  if (!s.a) return { x: 0, y: 0 };
-  var f = INK_R && INK_R.frames ? INK_R.frames[s.a] : null;
-  return f ? { x: f.x, y: f.y } : null;
+  return inkPlaceOf(inkGroupKey(s));
 }
 
 function inkAbsBox(s, o) {
   var b = inkStrokeBox(s);
-  return { x0: b.x0 + o.x, y0: b.y0 + o.y, x1: b.x1 + o.x, y1: b.y1 + o.y };
+  return { x0: b.x0 * o.s + o.x, y0: b.y0 * o.s + o.y, x1: b.x1 * o.s + o.x, y1: b.y1 * o.s + o.y };
 }
 
 function inkRound(n) {
@@ -50,8 +45,8 @@ function inkRound(n) {
 
 function inkCopyStroke(s) {
   return {
-    id: s.id, tool: s.tool, b: s.b, color: s.color, w: s.w, k: s.k, sim: s.sim, shape: s.shape, closed: s.closed,
-    dash: s.dash, fill: s.fill, a: s.a, pts: s.pts ? s.pts.slice() : []
+    id: s.id, tool: s.tool, b: s.b, color: s.color, w: s.w, k: s.k, ps: s.ps, sim: s.sim, shape: s.shape,
+    closed: s.closed, dash: s.dash, fill: s.fill, a: s.a, pts: s.pts ? s.pts.slice() : []
   };
 }
 
@@ -60,6 +55,7 @@ function inkApply(op) {
   inkNoAnim(function () {
     (op.remove || []).forEach(function (s) {
       delete store.byId[s.id];
+      store.dirty[inkGroupKey(s)] = true;
       inkUnrenderStroke(s.id);
     });
     if ((op.remove || []).length) {
@@ -68,76 +64,62 @@ function inkApply(op) {
     (op.add || []).forEach(function (s) {
       store.byId[s.id] = s;
       store.strokes.push(s);
+      store.dirty[inkGroupKey(s)] = true;
       inkRenderStroke(s);
     });
   });
-  inkSaveSoon();
 }
 
-function inkRecord(op) {
-  INK_UNDO.push(op);
-  if (INK_UNDO.length > 300) INK_UNDO.shift();
-  INK_REDO = [];
-}
-
-// Merge into the open eraser op of the same gesture (pieces created and
-// erased again within one gesture simply disappear from it).
-function inkRecordGesture(g, added, removed) {
-  var last = INK_UNDO[INK_UNDO.length - 1];
-  if (!last || last.g !== g) {
-    inkRecord({ add: added, remove: removed, g: g });
-    return;
-  }
-  removed.forEach(function (s) {
-    var i = last.add.indexOf(s);
-    if (i >= 0) last.add.splice(i, 1);
-    else last.remove.push(s);
-  });
-  last.add = last.add.concat(added);
-}
-
-function inkUndo() {
-  var op = INK_UNDO.pop();
-  if (!op) return;
-  inkApply({ add: op.remove, remove: op.add });
-  INK_REDO.push(op);
+function inkUndoRedo(addon, redo) {
+  inkCommit();
+  var um = UndoManager.sharedInstance();
+  if (redo ? !um.canRedo() : !um.canUndo()) return false;
+  if (redo) um.redo();
+  else um.undo();
   INK_SEL = null;
-}
-
-function inkRedo() {
-  var op = INK_REDO.pop();
-  if (!op) return;
-  inkApply(op);
-  INK_UNDO.push(op);
-  INK_SEL = null;
+  if (inkReloadIfChanged()) inkRerenderAll(addon);
+  return true;
 }
 
 function inkHistoryState() {
-  return { canUndo: INK_UNDO.length > 0, canRedo: INK_REDO.length > 0, count: INK_STORE ? INK_STORE.strokes.length : 0 };
+  var um = UndoManager.sharedInstance();
+  return { canUndo: !!um.canUndo(), canRedo: !!um.canRedo(), count: INK_STORE ? INK_STORE.strokes.length : 0 };
 }
 
-// Re-anchor absolute canvas points to the best card and build the stroke.
-function inkMakeStroke(base, absPts) {
+// Absolute surface points → a stroke in the right group (card or page).
+function inkMakeStroke(base, absPts, ctx, v) {
   var s = inkCopyStroke(base);
-  s.id = inkNewId();
-  s.a = null;
+  s.id = base.id || inkNewId();
   s.pts = absPts;
-  delete s._box;
-  var anchor = inkPickAnchor(INK_R.frames || {}, inkStrokeBox(s));
-  delete s._box;
-  if (anchor) {
-    var f = INK_R.frames[anchor];
-    for (var j = 0; j + 2 < s.pts.length; j += 3) {
-      s.pts[j] = inkRound(s.pts[j] - f.x);
-      s.pts[j + 1] = inkRound(s.pts[j + 1] - f.y);
-    }
-    s.a = anchor;
+  s.a = null;
+  var bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+  for (var i = 0; i + 2 < absPts.length; i += 3) {
+    bx0 = Math.min(bx0, absPts[i]); bx1 = Math.max(bx1, absPts[i]);
+    by0 = Math.min(by0, absPts[i + 1]); by1 = Math.max(by1, absPts[i + 1]);
   }
+  var surf = inkSurf(ctx.kind);
+  var place = surf ? surf.place : {};
+  var key = ctx.kind === 'map'
+    ? inkPickAnchor(place, { x0: bx0, y0: by0, x1: bx1, y1: by1 })
+    : inkPickPage(place, (bx0 + bx1) / 2, (by0 + by1) / 2);
+  var p = key ? place[key] : null;
+  if (ctx.kind === 'doc' && !p) return null;
+  if (!p) p = { x: 0, y: 0, s: 1 };
+  var sc = p.s;
+  for (var j = 0; j + 2 < s.pts.length; j += 3) {
+    s.pts[j] = inkRound((s.pts[j] - p.x) / sc);
+    s.pts[j + 1] = inkRound((s.pts[j + 1] - p.y) / sc);
+  }
+  s.w = base.w / sc;
+  s.k = (v ? v.z : 1) * sc;
+  s.a = key || null;
+  delete s._box;
   return s;
 }
 
-// m: { tool, b, color, size, sim, shape, closed, dash, pts: [x, y, p, …] } in screen units.
+// m: { tool, b, color, size, ps, sim, shape, closed, dash, pts: [x, y, p, …] } in screen units.
 function inkCommitStroke(views, m) {
+  var ctx = views.active;
   var v = inkView(views);
   var pts = [];
   for (var i = 0; i + 2 < m.pts.length; i += 3) {
@@ -147,12 +129,13 @@ function inkCommitStroke(views, m) {
   if (pts.length < 3) return null;
   var tool = m.tool === 'marker' ? 'marker' : 'pen';
   var s = inkMakeStroke({
-    tool: tool, b: inkBrushOf(tool, m.b), color: String(m.color || '#1d1d1f'),
-    w: m.size / v.z, k: v.z, sim: !!m.sim, shape: !!m.shape, closed: !!m.closed, dash: !!m.dash
-  }, pts);
-  var op = { add: [s], remove: [] };
-  inkApply(op);
-  inkRecord(op);
+    id: inkNewId(), tool: tool, b: inkBrushOf(tool, m.b), color: String(m.color || '#1d1d1f'), w: m.size / v.z,
+    ps: m.ps == null ? null : m.ps, sim: !!m.sim, shape: !!m.shape, closed: !!m.closed, dash: !!m.dash
+  }, pts, ctx, v);
+  if (!s) return null;
+  if (s.ps == null) delete s.ps;
+  inkApply({ add: [s], remove: [] });
+  inkCommit(m.shape ? '图形' : '书写');
   return s;
 }
 
@@ -168,7 +151,7 @@ function inkSegDist(p, q, a, b) {
 
 // Absolute [x, y, p] points of a stroke; shapes become their (closed) polyline.
 function inkAbsPoints(s, o) {
-  var pts = inkTriples(s.pts).map(function (p) { return [p[0] + o.x, p[1] + o.y, p[2]]; });
+  var pts = inkTriples(s.pts).map(function (p) { return [p[0] * o.s + o.x, p[1] * o.s + o.y, p[2]]; });
   if (s.shape && s.closed && pts.length > 1) {
     var f = pts[0], l = pts[pts.length - 1];
     if (f[0] !== l[0] || f[1] !== l[1]) pts.push([f[0], f[1], f[2]]);
@@ -181,7 +164,7 @@ function inkDensify(pts, gap) {
   var out = [pts[0]];
   for (var i = 1; i < pts.length; i++) {
     var a = pts[i - 1], b = pts[i];
-    var n = Math.floor(inkDist(a, b) / gap);
+    var n = Math.min(400, Math.floor(inkDist(a, b) / gap));
     for (var k = 1; k <= n; k++) {
       var t = k / (n + 1);
       out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
@@ -191,8 +174,8 @@ function inkDensify(pts, gap) {
   return out;
 }
 
-function inkReach(s, r) {
-  return r + (s.shape ? inkShapeWidth(inkBrushOf(s.tool, s.b), s.w) : s.w) / 2;
+function inkAbsWidth(s, o) {
+  return (s.shape ? inkShapeWidth(inkBrushOf(s.tool, s.b), s.w) : s.w) * o.s;
 }
 
 function inkTouches(pts, e, reach) {
@@ -212,16 +195,22 @@ function inkNearEraser(p, e, reach) {
 }
 
 // Partial eraser: cut the erased part out and keep the remaining pieces.
-function inkSplitStroke(s, o, e, reach) {
-  var pts = inkDensify(inkAbsPoints(s, o), Math.max(reach * 0.4, 0.5));
+function inkSplitStroke(s, o, e, reach, ctx) {
+  var pts = inkDensify(inkAbsPoints(s, o), Math.max(reach * 0.4, 0.5 / (o.s || 1)));
   var pieces = [], run = [];
+  var w = s.w * o.s;
   function flush() {
-    if (run.length >= 2 && inkPathLength(run) > s.w * 0.8) {
+    if (run.length >= 2 && inkPathLength(run) > w * 0.8) {
       var flat = [];
       run.forEach(function (p) { flat.push(inkRound(p[0]), inkRound(p[1]), p[2]); });
-      var piece = inkMakeStroke(s, flat);
-      piece.closed = false;
-      pieces.push(piece);
+      var base = inkCopyStroke(s);
+      base.id = inkNewId();
+      base.w = w;
+      var piece = inkMakeStroke(base, flat, ctx, { z: (s.k || 1) / (o.s || 1) });
+      if (piece) {
+        piece.closed = false;
+        pieces.push(piece);
+      }
     }
     run = [];
   }
@@ -234,7 +223,9 @@ function inkSplitStroke(s, o, e, reach) {
 }
 
 // m: { pts: [x, y, …] screen, r: screen radius, g: gesture id, mode: 'stroke'|'partial', markerOnly }
+// Applied at once; written to the notebook when the gesture ends (eraseEnd).
 function inkErase(views, m) {
+  var ctx = views.active;
   var v = inkView(views);
   var e = [];
   for (var i = 0; i + 1 < m.pts.length; i += 2) e.push(inkToCanvas(v, m.pts[i], m.pts[i + 1]));
@@ -244,19 +235,18 @@ function inkErase(views, m) {
   var eb = inkBBox(e);
   var removed = [], added = [];
   INK_STORE.strokes.forEach(function (s) {
+    if (!inkOnSurface(s, ctx)) return;
     if (m.markerOnly && s.tool !== 'marker') return;
     var o = inkOrigin(s);
     if (!o) return;
     var b = inkAbsBox(s, o);
     if (b.x1 < eb.x0 - r || b.x0 > eb.x1 + r || b.y1 < eb.y0 - r || b.y0 > eb.y1 + r) return;
-    var reach = inkReach(s, r);
+    var reach = r + inkAbsWidth(s, o) / 2;
     if (!inkTouches(inkAbsPoints(s, o), e, reach)) return;
     removed.push(s);
-    if (m.mode === 'partial') added = added.concat(inkSplitStroke(s, o, e, m.r / v.z + 0.5 / v.z));
+    if (m.mode === 'partial') added = added.concat(inkSplitStroke(s, o, e, r + 0.5 / v.z, ctx));
   });
-  if (!removed.length) return;
-  inkApply({ add: added, remove: removed });
-  inkRecordGesture(m.g, added, removed);
+  if (removed.length) inkApply({ add: added, remove: removed });
 }
 
 function inkPointInPoly(p, poly) {
@@ -300,34 +290,47 @@ function inkSelectionInfo(views) {
     var tri = inkTriples(s0.pts);
     var count = s0.closed && tri.length > 1 ? tri.length - 1 : tri.length;
     for (var i = 0; i < count; i++) {
-      var p = inkToScreen(v, tri[i][0] + o0.x, tri[i][1] + o0.y);
+      var p = inkToScreen(v, tri[i][0] * o0.s + o0.x, tri[i][1] * o0.s + o0.y);
       nodes.push(Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10);
     }
     var brush = inkBrushOf(s0.tool, s0.b);
     info.shape = {
       id: s0.id, closed: !!s0.closed, pts: nodes, color: s0.color, dash: !!s0.dash,
-      width: inkShapeWidth(brush, s0.w) * v.z, alpha: inkBrushAlpha(brush)
+      width: inkAbsWidth(s0, o0) * v.z, alpha: inkBrushAlpha(brush)
     };
   }
   return info;
 }
 
-// Select the strokes mostly inside a lasso.
+function inkTypeOf(s) {
+  if (s.tool === 'marker') return 'marker';
+  return s.shape ? 'shape' : 'pen';
+}
+
+// GoodNotes-style lasso: a stroke is selected when any part of it is inside
+// the lasso or crosses its outline. m: { poly: [x, y, …] screen, types: {pen, marker, shape} }
 function inkLasso(views, m) {
+  var ctx = views.active;
   var v = inkView(views);
   var poly = [];
   for (var i = 0; i + 1 < m.poly.length; i += 2) poly.push(inkToCanvas(v, m.poly[i], m.poly[i + 1]));
   INK_SEL = null;
   if (poly.length < 3) return null;
+  var ring = poly.concat([poly[0]]);
+  var pb = inkBBox(poly);
+  var types = m.types || { pen: true, marker: true, shape: true };
   var ids = [];
   INK_STORE.strokes.forEach(function (s) {
+    if (!inkOnSurface(s, ctx) || types[inkTypeOf(s)] === false) return;
     var o = inkOrigin(s);
     if (!o) return;
+    var b = inkAbsBox(s, o);
+    if (b.x1 < pb.x0 || b.x0 > pb.x1 || b.y1 < pb.y0 || b.y0 > pb.y1) return;
     var pts = inkAbsPoints(s, o);
-    if (s.shape) pts = inkResample(pts, 24);
-    var inside = 0;
-    pts.forEach(function (p) { if (inkPointInPoly(p, poly)) inside++; });
-    if (inside / pts.length >= 0.6) ids.push(s.id);
+    for (var k = 0; k < pts.length; k++) {
+      if (inkPointInPoly(pts[k], poly)) { ids.push(s.id); return; }
+    }
+    if (inkTouches(pts, ring, inkAbsWidth(s, o) / 2)) ids.push(s.id);
   });
   if (!ids.length) return null;
   INK_SEL = { ids: ids };
@@ -336,78 +339,95 @@ function inkLasso(views, m) {
 
 // Live preview while dragging a selection: translate the layers only.
 function inkMovePreview(views, dx, dy) {
-  var z = views.sv.zoomScale;
+  var z = inkView(views).z;
   inkNoAnim(function () {
     inkSelected().forEach(function (s) {
-      var layer = INK_R.layers[s.id];
+      var layer = inkLayerOf(s.id);
       if (layer) layer.position = { x: dx / z, y: dy / z };
     });
   });
 }
 
-function inkTransformed(s, fn, wScale) {
-  var c = inkCopyStroke(s);
-  for (var i = 0; i + 2 < c.pts.length; i += 3) {
-    var q = fn(c.pts[i], c.pts[i + 1]);
-    c.pts[i] = inkRound(q[0]);
-    c.pts[i + 1] = inkRound(q[1]);
-  }
-  if (wScale) c.w = s.w * wScale;
-  return c;
+// Re-place a stroke after a transform of its absolute points.
+function inkTransformed(s, ctx, v, fn, wScale) {
+  var o = inkOrigin(s) || { x: 0, y: 0, s: 1 };
+  var abs = [];
+  inkTriples(s.pts).forEach(function (p) {
+    var q = fn(p[0] * o.s + o.x, p[1] * o.s + o.y);
+    abs.push(inkRound(q[0]), inkRound(q[1]), p[2]);
+  });
+  var base = inkCopyStroke(s);
+  base.w = s.w * o.s * (wScale || 1);
+  var t = inkMakeStroke(base, abs, ctx, { z: (s.k || 1) / (o.s || 1) });
+  return t;
 }
 
-function inkReplaceSelection(news, olds) {
-  var op = { add: news, remove: olds };
-  inkApply(op);
-  inkRecord(op);
+function inkReplaceSelection(news, olds, label) {
+  news = news.filter(Boolean);
+  inkApply({ add: news, remove: olds });
+  inkCommit(label);
   INK_SEL = { ids: news.map(function (s) { return s.id; }) };
 }
 
 function inkMoveCommit(views, dx, dy) {
-  var z = views.sv.zoomScale;
+  var v = inkView(views);
   var olds = inkSelected();
   if (!olds.length || (!dx && !dy)) {
     inkMovePreview(views, 0, 0);
     return;
   }
   inkReplaceSelection(olds.map(function (s) {
-    return inkTransformed(s, function (x, y) { return [x + dx / z, y + dy / z]; });
-  }), olds);
+    return inkTransformed(s, views.active, v, function (x, y) { return [x + dx / v.z, y + dy / v.z]; });
+  }), olds, '移动');
 }
 
-// Resize about a fixed screen point. m: { sx, sy, ax, ay }
-function inkScaler(views, s, m) {
+// Resize / rotate about a fixed screen point. m: { sx, sy, rot, ax, ay }
+function inkTransformFn(views, m) {
   var v = inkView(views);
-  var o = inkOrigin(s) || { x: 0, y: 0 };
   var a = inkToCanvas(v, m.ax, m.ay);
-  var lx = a[0] - o.x, ly = a[1] - o.y;
-  return function (x, y) { return [lx + (x - lx) * m.sx, ly + (y - ly) * m.sy]; };
+  var c = Math.cos(m.rot || 0), sn = Math.sin(m.rot || 0);
+  var sx = m.sx || 1, sy = m.sy || 1;
+  return function (x, y) {
+    var dx = (x - a[0]) * sx, dy = (y - a[1]) * sy;
+    return [a[0] + dx * c - dy * sn, a[1] + dx * sn + dy * c];
+  };
 }
 
-function inkScalePreview(views, m) {
+function inkTransformPreview(views, m) {
   var sel = inkSelected();
   if (sel.length > 40) return; // big selections: the page shows the box only
+  var v = inkView(views);
+  var fn = inkTransformFn(views, m);
+  var wScale = Math.sqrt(Math.abs((m.sx || 1) * (m.sy || 1)));
   inkNoAnim(function () {
     sel.forEach(function (s) {
-      var layer = INK_R.layers[s.id];
-      if (!layer) return;
-      var t = inkTransformed(s, inkScaler(views, s, m), Math.sqrt(Math.abs(m.sx * m.sy)));
-      var path = inkStrokePath(t);
+      var layer = inkLayerOf(s.id);
+      var o = inkOrigin(s);
+      if (!layer || !o) return;
+      var abs = inkTriples(s.pts).map(function (p) { return fn(p[0] * o.s + o.x, p[1] * o.s + o.y); });
+      var t = inkCopyStroke(s);
+      t.pts = [];
+      abs.forEach(function (q, i) { t.pts.push((q[0] - o.x) / o.s, (q[1] - o.y) / o.s, s.pts[i * 3 + 2]); });
+      t.w = s.w * wScale;
+      var path = inkStrokePath(t, o.s);
       if (path) layer.path = path;
-      if (t.shape) layer.lineWidth = inkShapeWidth(inkBrushOf(t.tool, t.b), t.w);
+      if (t.shape) layer.lineWidth = inkAbsWidth(t, o);
     });
   });
 }
 
-function inkScaleCommit(views, m) {
+function inkTransformCommit(views, m) {
   var olds = inkSelected();
   if (!olds.length) return;
-  if (Math.abs(m.sx - 1) < 0.005 && Math.abs(m.sy - 1) < 0.005) {
-    inkApply({ add: olds, remove: olds });
+  var idle = Math.abs((m.sx || 1) - 1) < 0.005 && Math.abs((m.sy || 1) - 1) < 0.005 && Math.abs(m.rot || 0) < 0.003;
+  if (idle) {
+    inkNoAnim(function () { olds.forEach(function (s) { inkUnrenderStroke(s.id); inkRenderStroke(s); }); });
     return;
   }
-  var wScale = Math.sqrt(Math.abs(m.sx * m.sy));
-  inkReplaceSelection(olds.map(function (s) { return inkTransformed(s, inkScaler(views, s, m), wScale); }), olds);
+  var v = inkView(views);
+  var fn = inkTransformFn(views, m);
+  var wScale = Math.sqrt(Math.abs((m.sx || 1) * (m.sy || 1)));
+  inkReplaceSelection(olds.map(function (s) { return inkTransformed(s, views.active, v, fn, wScale); }), olds, m.rot ? '旋转' : '缩放');
 }
 
 function inkRecolorSelection(color) {
@@ -417,75 +437,122 @@ function inkRecolorSelection(color) {
     var c = inkCopyStroke(s);
     c.color = color;
     return c;
-  }), olds);
+  }), olds, '改颜色');
 }
 
 function inkDuplicateSelection(views) {
   var olds = inkSelected();
   if (!olds.length) return;
-  var d = 24 / views.sv.zoomScale;
+  var v = inkView(views);
+  var d = 24 / v.z;
   var copies = olds.map(function (s) {
-    var c = inkTransformed(s, function (x, y) { return [x + d, y + d]; });
-    c.id = inkNewId();
+    var c = inkTransformed(s, views.active, v, function (x, y) { return [x + d, y + d]; });
+    if (c) c.id = inkNewId();
     return c;
-  });
-  var op = { add: copies, remove: [] };
-  inkApply(op);
-  inkRecord(op);
+  }).filter(Boolean);
+  inkApply({ add: copies, remove: [] });
+  inkCommit('复制');
   INK_SEL = { ids: copies.map(function (s) { return s.id; }) };
 }
 
-function inkDeleteSelection() {
+// Clipboard keeps screen-unit geometry, so a paste looks the same size.
+function inkCopySelection(views) {
+  var sel = inkSelected();
+  if (!sel.length) return 0;
+  var v = inkView(views);
+  var items = [], bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+  sel.forEach(function (s) {
+    var o = inkOrigin(s);
+    if (!o) return;
+    var pts = [];
+    inkTriples(s.pts).forEach(function (p) {
+      var q = inkToScreen(v, p[0] * o.s + o.x, p[1] * o.s + o.y);
+      pts.push(q[0], q[1], p[2]);
+      bx0 = Math.min(bx0, q[0]); bx1 = Math.max(bx1, q[0]); by0 = Math.min(by0, q[1]); by1 = Math.max(by1, q[1]);
+    });
+    var c = inkCopyStroke(s);
+    c.w = s.w * o.s * v.z; // screen units
+    c.pts = pts;
+    items.push(c);
+  });
+  var cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
+  items.forEach(function (c) {
+    for (var i = 0; i + 2 < c.pts.length; i += 3) { c.pts[i] -= cx; c.pts[i + 1] -= cy; }
+  });
+  INK_CLIP = items;
+  return items.length;
+}
+
+function inkPaste(views, m) {
+  if (!INK_CLIP || !INK_CLIP.length) return;
+  var ctx = views.active;
+  var v = inkView(views);
+  var news = INK_CLIP.map(function (c) {
+    var abs = [];
+    for (var i = 0; i + 2 < c.pts.length; i += 3) {
+      var q = inkToCanvas(v, c.pts[i] + m.x, c.pts[i + 1] + m.y);
+      abs.push(inkRound(q[0]), inkRound(q[1]), c.pts[i + 2]);
+    }
+    var base = inkCopyStroke(c);
+    base.id = inkNewId();
+    base.w = c.w / v.z;
+    return inkMakeStroke(base, abs, ctx, v);
+  }).filter(Boolean);
+  inkApply({ add: news, remove: [] });
+  inkCommit('粘贴');
+  INK_SEL = { ids: news.map(function (s) { return s.id; }) };
+}
+
+function inkDeleteSelection(label) {
   var olds = inkSelected();
   INK_SEL = null;
   if (!olds.length) return;
-  var op = { add: [], remove: olds };
-  inkApply(op);
-  inkRecord(op);
+  inkApply({ add: [], remove: olds });
+  inkCommit(label || '删除');
 }
 
 // Node editing of a single shape: hide the native copy while the page previews.
 function inkEditBegin(id) {
-  var layer = INK_R && INK_R.layers[id];
+  var layer = inkLayerOf(id);
   if (layer) layer.hidden = true;
   INK_HIDDEN = id;
 }
 
 function inkEditEnd(views, m) {
   var s = INK_STORE.byId[m.id];
-  var layer = INK_R && INK_R.layers[m.id];
+  var layer = inkLayerOf(m.id);
   if (layer) layer.hidden = false;
   INK_HIDDEN = null;
   if (!s || !m.pts) return;
   var v = inkView(views);
-  var o = inkOrigin(s) || { x: 0, y: 0 };
+  var o = inkOrigin(s) || { x: 0, y: 0, s: 1 };
   var pts = [];
   for (var i = 0; i + 1 < m.pts.length; i += 2) {
     var c = inkToCanvas(v, m.pts[i], m.pts[i + 1]);
-    pts.push(inkRound(c[0] - o.x), inkRound(c[1] - o.y), 0.5);
+    pts.push(inkRound((c[0] - o.x) / o.s), inkRound((c[1] - o.y) / o.s), 0.5);
   }
   if (s.closed) pts.push(pts[0], pts[1], 0.5);
   var c2 = inkCopyStroke(s);
   c2.pts = pts;
-  inkReplaceSelection([c2], [s]);
+  inkReplaceSelection([c2], [s], '编辑节点');
 }
 
 // Snap targets for the page: corners of visible straight-edged shapes and
-// centres of circles / ellipses, in mind map units.
-function inkSnapNodes() {
+// centres of circles / ellipses, in surface units.
+function inkSnapNodes(views) {
   var out = [];
-  if (!INK_STORE) return out;
+  if (!INK_STORE || !views || !views.active) return out;
   for (var i = 0; i < INK_STORE.strokes.length && out.length < 4000; i++) {
     var s = INK_STORE.strokes[i];
-    if (!s.shape) continue;
+    if (!s.shape || !inkOnSurface(s, views.active)) continue;
     var o = inkOrigin(s);
     if (!o) continue;
     var tri = inkTriples(s.pts);
     if (tri.length <= 16) {
-      tri.forEach(function (p) { out.push(inkRound(p[0] + o.x), inkRound(p[1] + o.y)); });
+      tri.forEach(function (p) { out.push(inkRound(p[0] * o.s + o.x), inkRound(p[1] * o.s + o.y)); });
     } else {
       var b = inkStrokeBox(s);
-      out.push(inkRound((b.x0 + b.x1) / 2 + o.x), inkRound((b.y0 + b.y1) / 2 + o.y));
+      out.push(inkRound(((b.x0 + b.x1) / 2) * o.s + o.x), inkRound(((b.y0 + b.y1) / 2) * o.s + o.y));
     }
   }
   return out;
