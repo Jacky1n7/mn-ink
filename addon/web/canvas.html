@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>MN Ink</title>
+<style>
+  :root {
+    --bar: rgba(250, 250, 252, 0.94);
+    --line: rgba(0, 0, 0, 0.09);
+    --ink: #1d1d1f;
+    --muted: #8a8a8f;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.14);
+    --hover: rgba(0, 0, 0, 0.06);
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bar: rgba(44, 44, 46, 0.94);
+      --line: rgba(255, 255, 255, 0.10);
+      --ink: #f2f2f7;
+      --muted: #98989f;
+      --accent: #0a84ff;
+      --accent-soft: rgba(10, 132, 255, 0.24);
+      --hover: rgba(255, 255, 255, 0.08);
+    }
+  }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: transparent;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    font: 13px/1.2 -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+  }
+  #live { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; touch-action: none; cursor: crosshair; }
+  #live.erase { cursor: none; }
+  #live.lasso { cursor: default; }
+
+  #bar {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 2px; padding: 6px;
+    background: var(--bar); border: 0.5px solid var(--line); border-radius: 16px;
+    box-shadow: var(--shadow); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
+    touch-action: none; width: max-content; max-width: calc(100vw - 24px); box-sizing: border-box;
+  }
+  .btn {
+    width: 38px; height: 38px; border: 0; border-radius: 11px; background: transparent; color: var(--ink);
+    display: grid; place-items: center; padding: 0; flex: none;
+  }
+  .btn svg { width: 22px; height: 22px; }
+  .btn:active { background: var(--hover); }
+  .btn.on { background: var(--accent-soft); color: var(--accent); }
+  .btn[disabled] { opacity: 0.3; }
+  .sep { width: 1px; height: 26px; background: var(--line); margin: 0 5px; flex: none; }
+  .group { display: flex; align-items: center; gap: 2px; }
+  /* Fixed-width slots so the tool buttons never move when the tool changes. */
+  .colors { width: 166px; justify-content: center; }
+  .sizes { width: 100px; justify-content: center; }
+  .hint { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .sw {
+    width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; margin: 0 3px; flex: none;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+  }
+  .sw.on { box-shadow: 0 0 0 2px var(--bar), 0 0 0 4px var(--accent); }
+  .size { width: 32px; height: 38px; border: 0; background: transparent; border-radius: 10px; display: grid; place-items: center; padding: 0; flex: none; }
+  .size i { display: block; border-radius: 50%; background: var(--muted); }
+  .size.on i { background: var(--ink); }
+  .size.on { background: var(--hover); }
+  .done {
+    height: 34px; padding: 0 16px; margin-left: 4px; border: 0; border-radius: 11px; flex: none;
+    background: var(--accent); color: #fff; font-weight: 600; font-size: 14px;
+  }
+  #selbar {
+    position: fixed; display: none; gap: 4px; padding: 4px; border-radius: 12px;
+    background: var(--bar); border: 0.5px solid var(--line); box-shadow: var(--shadow);
+  }
+  #selbar button { border: 0; background: transparent; color: var(--ink); height: 30px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
+  #selbar button.danger { color: #ff3b30; }
+  #toast {
+    position: fixed; left: 50%; top: 18px; transform: translateX(-50%); display: none;
+    padding: 8px 14px; border-radius: 10px; background: rgba(30, 30, 32, 0.9); color: #fff; font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<canvas id="live"></canvas>
+<div id="bar"></div>
+<div id="selbar"><button id="selDelete" class="danger">删除</button><button id="selCancel">取消选择</button></div>
+<div id="toast"></div>
+<script>
+'use strict';
+/*@@FREEHAND@@*/
+/*@@SHARED@@*/
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+var PEN_COLORS = ['#1d1d1f', '#1f4fd1', '#d7262b', '#178a4c', '#7a3fe0'];
+var MARKER_COLORS = ['#ffd60a', '#7ee081', '#7cc4ff', '#ff9ec7'];
+var PEN_SIZES = [1.3, 2.2, 3.6];     // screen points, whatever the zoom
+var MARKER_SIZES = [9, 15, 24];
+var ERASER_SIZES = [6, 12, 24];
+var MARKER_ALPHA = 0.36;
+var HOLD_MS = 450;                    // pen held still this long → snap to a shape
+
+var prefs = { tool: 'pen', penColor: 0, penSize: 1, markerColor: 0, markerSize: 1, eraserSize: 1, snap: true };
+var zoom = 1;
+var hist = { canUndo: false, canRedo: false };
+
+// ---------------------------------------------------------------------------
+// Channel to the add-on: one batch in flight, acked by ink.ack(seq).
+// ---------------------------------------------------------------------------
+var seq = 0, inflight = null, queue = [];
+
+function send(m) {
+  var last = queue[queue.length - 1];
+  if (last && last.t === m.t && m.t === 'view') {
+    last.dx += m.dx; last.dy += m.dy; last.s *= m.s; last.cx = m.cx; last.cy = m.cy;
+  } else if (last && last.t === m.t && m.t === 'move') {
+    last.dx = m.dx; last.dy = m.dy;
+  } else {
+    queue.push(m);
+  }
+  pump();
+}
+
+function pump() {
+  if (inflight || !queue.length) return;
+  inflight = { seq: ++seq, msgs: queue, at: Date.now() };
+  queue = [];
+  location.href = 'mnink://m?' + encodeURIComponent(JSON.stringify({ seq: inflight.seq, msgs: inflight.msgs }));
+}
+
+setInterval(function () {
+  // A lost navigation would stall the channel; resend (the add-on ignores duplicates).
+  if (inflight && Date.now() - inflight.at > 900) {
+    var msgs = inflight.msgs;
+    inflight = null;
+    seq--;
+    queue = msgs.concat(queue);
+    pump();
+  }
+}, 300);
+
+// ---------------------------------------------------------------------------
+// Live canvas
+// ---------------------------------------------------------------------------
+var cv = document.getElementById('live');
+var g = cv.getContext('2d');
+var W = 0, H = 0, DPR = 1;
+
+function resize() {
+  DPR = window.devicePixelRatio || 1;
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  draw();
+}
+window.addEventListener('resize', resize);
+
+var active = null;          // stroke being drawn
+var pending = new Map();    // lid → finished stroke, shown until the native copy is on screen
+var lasso = null;           // { pts }
+var sel = null;             // { box: {x, y, w, h}, n, drag: {x0, y0, dx, dy} | null }
+var eraser = null;          // { g, buf, last, sentAt }
+var cursor = null;          // eraser hover position
+var lidSeq = 0;
+var drawQueued = false;
+
+function schedule() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(function () { drawQueued = false; draw(); });
+}
+
+function fillOutline(o) {
+  if (o.length < 3) return;
+  g.beginPath();
+  g.moveTo(o[0][0], o[0][1]);
+  for (var i = 0; i < o.length; i++) {
+    var a = o[i], b = o[(i + 1) % o.length];
+    g.quadraticCurveTo(a[0], a[1], (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+  }
+  g.closePath();
+  g.fill();
+}
+
+function drawStroke(s) {
+  g.globalAlpha = s.tool === 'marker' ? MARKER_ALPHA : 1;
+  g.fillStyle = s.color;
+  g.strokeStyle = s.color;
+  if (s.shape) {
+    var p = s.shape.pts;
+    g.lineWidth = s.size * INK_SHAPE_WIDTH;
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    g.beginPath();
+    g.moveTo(p[0][0], p[0][1]);
+    for (var i = 1; i < p.length; i++) g.lineTo(p[i][0], p[i][1]);
+    if (s.shape.closed) g.closePath();
+    g.stroke();
+  } else {
+    fillOutline(INK_FREEHAND.getStroke(s.pts, inkFreehandOptions(s.tool, s.size, s.sim, !!s.done)));
+  }
+  g.globalAlpha = 1;
+}
+
+function draw() {
+  g.clearRect(0, 0, W, H);
+  pending.forEach(drawStroke);
+  if (active) drawStroke(active);
+  if (lasso && lasso.pts.length > 1) {
+    g.save();
+    g.setLineDash([5, 5]);
+    g.lineWidth = 1.5;
+    g.strokeStyle = '#0a84ff';
+    g.fillStyle = 'rgba(10,132,255,0.06)';
+    g.beginPath();
+    g.moveTo(lasso.pts[0][0], lasso.pts[0][1]);
+    for (var i = 1; i < lasso.pts.length; i++) g.lineTo(lasso.pts[i][0], lasso.pts[i][1]);
+    g.closePath();
+    g.fill();
+    g.stroke();
+    g.restore();
+  }
+  if (sel) {
+    var b = sel.box, dx = sel.drag ? sel.drag.dx : 0, dy = sel.drag ? sel.drag.dy : 0;
+    g.save();
+    g.setLineDash([6, 4]);
+    g.lineWidth = 1.5;
+    g.strokeStyle = '#0a84ff';
+    g.strokeRect(b.x + dx - 4, b.y + dy - 4, b.w + 8, b.h + 8);
+    g.restore();
+  }
+  if (cursor && prefs.tool === 'eraser') {
+    g.beginPath();
+    g.arc(cursor[0], cursor[1], ERASER_SIZES[prefs.eraserSize], 0, Math.PI * 2);
+    g.lineWidth = 1;
+    g.strokeStyle = 'rgba(120,120,128,0.9)';
+    g.fillStyle = 'rgba(255,255,255,0.35)';
+    g.fill();
+    g.stroke();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+var touches = new Map();     // finger pointers → [x, y]
+var gest = null;             // { n, cx, cy, d }
+var penId = null;            // pointer drawing right now
+var holdTimer = 0;
+
+function pressureOf(e) {
+  if (e.pointerType !== 'pen') return 0.5;
+  var p = e.pressure || 0;
+  // Pencil reports light writing as ~0.1–0.4; lift it so normal writing is not hairline.
+  p = 1 - (1 - p) * (1 - p);
+  return Math.max(0.05, Math.min(1, p));
+}
+
+function gestureInfo() {
+  var pts = Array.from(touches.values());
+  if (!pts.length) return null;
+  var cx = 0, cy = 0;
+  pts.forEach(function (p) { cx += p[0]; cy += p[1]; });
+  cx /= pts.length; cy /= pts.length;
+  var d = pts.length > 1 ? Math.hypot(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1]) : 0;
+  return { n: pts.length, cx: cx, cy: cy, d: d };
+}
+
+function clearSelection(notify) {
+  if (!sel) return;
+  sel = null;
+  showSelBar();
+  if (notify) send({ t: 'deselect' });
+  schedule();
+}
+
+cv.addEventListener('pointerdown', function (e) {
+  e.preventDefault();
+  if (e.pointerType === 'touch') {
+    if (penId !== null) return; // palm while writing
+    touches.set(e.pointerId, [e.clientX, e.clientY]);
+    cv.setPointerCapture(e.pointerId);
+    gest = gestureInfo();
+    return;
+  }
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  touches.clear();
+  gest = null;
+  penId = e.pointerId;
+  cv.setPointerCapture(e.pointerId);
+  startTool(e);
+  schedule();
+});
+
+cv.addEventListener('pointermove', function (e) {
+  if (e.pointerType === 'touch') {
+    if (!touches.has(e.pointerId)) return;
+    touches.set(e.pointerId, [e.clientX, e.clientY]);
+    var ng = gestureInfo();
+    if (gest && ng && ng.n === gest.n) {
+      if (sel) clearSelection(true);
+      send({ t: 'view', dx: ng.cx - gest.cx, dy: ng.cy - gest.cy, s: ng.n > 1 && gest.d > 0 ? ng.d / gest.d : 1, cx: ng.cx, cy: ng.cy });
+    }
+    gest = ng;
+    return;
+  }
+  if (prefs.tool === 'eraser') {
+    cursor = [e.clientX, e.clientY];
+    if (penId === null) schedule();
+  }
+  if (e.pointerId !== penId) return;
+  var list = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+  if (!list || !list.length) list = [e];
+  for (var i = 0; i < list.length; i++) moveTool(list[i]);
+  schedule();
+});
+
+function endPointer(e, cancelled) {
+  if (e.pointerType === 'touch') {
+    touches.delete(e.pointerId);
+    gest = gestureInfo();
+    return;
+  }
+  if (e.pointerId !== penId) return;
+  penId = null;
+  endTool(e, cancelled);
+  schedule();
+}
+cv.addEventListener('pointerup', function (e) { endPointer(e, false); });
+cv.addEventListener('pointercancel', function (e) { endPointer(e, true); });
+cv.addEventListener('pointerleave', function () { if (cursor && penId === null) { cursor = null; schedule(); } });
+
+// Trackpad (Mac): two-finger scroll pans, pinch zooms.
+cv.addEventListener('wheel', function (e) {
+  e.preventDefault();
+  if (sel) clearSelection(true);
+  if (e.ctrlKey) send({ t: 'view', dx: 0, dy: 0, s: Math.exp(-e.deltaY / 120), cx: e.clientX, cy: e.clientY });
+  else send({ t: 'view', dx: -e.deltaX, dy: -e.deltaY, s: 1, cx: e.clientX, cy: e.clientY });
+}, { passive: false });
+var gestureScale = 1;
+document.addEventListener('gesturestart', function (e) { e.preventDefault(); gestureScale = 1; });
+document.addEventListener('gesturechange', function (e) {
+  e.preventDefault();
+  send({ t: 'view', dx: 0, dy: 0, s: e.scale / gestureScale, cx: e.clientX || W / 2, cy: e.clientY || H / 2 });
+  gestureScale = e.scale;
+});
+
+document.addEventListener('keydown', function (e) {
+  var k = e.key.toLowerCase();
+  if ((e.metaKey || e.ctrlKey) && k === 'z') { e.preventDefault(); send({ t: e.shiftKey ? 'redo' : 'undo' }); }
+  else if (k === 'escape') { e.preventDefault(); if (sel) clearSelection(true); else send({ t: 'close' }); }
+  else if ((k === 'backspace' || k === 'delete') && sel) { e.preventDefault(); send({ t: 'deleteSel' }); }
+  else if (!e.metaKey && !e.ctrlKey) {
+    var map = { p: 'pen', h: 'marker', e: 'eraser', l: 'lasso' };
+    if (map[k]) setTool(map[k]);
+  }
+});
+
+function startTool(e) {
+  var x = e.clientX, y = e.clientY;
+  var tool = prefs.tool;
+  if (tool === 'pen' || tool === 'marker') {
+    if (sel) clearSelection(true);
+    var pen = tool === 'pen';
+    active = {
+      lid: ++lidSeq, tool: tool,
+      color: pen ? PEN_COLORS[prefs.penColor] : MARKER_COLORS[prefs.markerColor],
+      size: pen ? PEN_SIZES[prefs.penSize] : MARKER_SIZES[prefs.markerSize],
+      sim: e.pointerType !== 'pen' || tool === 'marker',
+      pts: [[x, y, pressureOf(e)]], shape: null, still: [x, y]
+    };
+    armHold();
+  } else if (tool === 'eraser') {
+    if (sel) clearSelection(true);
+    eraser = { g: 'e' + Date.now(), buf: [[x, y]], sentAt: 0 };
+    cursor = [x, y];
+    flushEraser(true);
+  } else if (tool === 'lasso') {
+    var b = sel && sel.box;
+    if (b && x >= b.x - 10 && x <= b.x + b.w + 10 && y >= b.y - 10 && y <= b.y + b.h + 10) {
+      sel.drag = { x0: x, y0: y, dx: 0, dy: 0 };
+      showSelBar();
+    } else {
+      if (sel) clearSelection(true);
+      lasso = { pts: [[x, y]] };
+    }
+  }
+}
+
+function moveTool(e) {
+  var x = e.clientX, y = e.clientY;
+  if (active) {
+    if (active.shape) return; // snapped: the shape stays as recognised
+    var last = active.pts[active.pts.length - 1];
+    if (last[0] === x && last[1] === y) return;
+    active.pts.push([x, y, pressureOf(e)]);
+    if (Math.hypot(x - active.still[0], y - active.still[1]) > 4) {
+      active.still = [x, y];
+      armHold();
+    }
+  } else if (eraser) {
+    eraser.buf.push([x, y]);
+    flushEraser(false);
+  } else if (lasso) {
+    lasso.pts.push([x, y]);
+  } else if (sel && sel.drag) {
+    sel.drag.dx = x - sel.drag.x0;
+    sel.drag.dy = y - sel.drag.y0;
+    send({ t: 'move', dx: sel.drag.dx, dy: sel.drag.dy });
+    showSelBar();
+  }
+}
+
+function armHold() {
+  clearTimeout(holdTimer);
+  if (!prefs.snap) return;
+  holdTimer = setTimeout(function () {
+    if (!active || active.shape) return;
+    var shape = inkRecognizeShape(active.pts);
+    if (shape) {
+      active.shape = shape;
+      schedule();
+    }
+  }, HOLD_MS);
+}
+
+function round(n) {
+  return Math.round(n * 10) / 10;
+}
+
+function endTool(e, cancelled) {
+  clearTimeout(holdTimer);
+  if (active) {
+    var s = active;
+    active = null;
+    if (cancelled) return;
+    var flat = [];
+    if (s.shape) {
+      s.shape.pts.forEach(function (p) { flat.push(round(p[0]), round(p[1]), 0.5); });
+    } else {
+      if (s.pts.length === 1) s.pts.push([s.pts[0][0] + 0.5, s.pts[0][1] + 0.5, s.pts[0][2]]);
+      s.pts.forEach(function (p) { flat.push(round(p[0]), round(p[1]), Math.round(p[2] * 100) / 100); });
+    }
+    s.done = true;
+    pending.set(s.lid, s);
+    send({
+      t: 'stroke', lid: s.lid, tool: s.tool, color: s.color, size: s.size, sim: s.sim,
+      shape: !!s.shape, closed: !!(s.shape && s.shape.closed), pts: flat
+    });
+  } else if (eraser) {
+    flushEraser(true);
+    eraser = null;
+    if (e.pointerType !== 'mouse') cursor = null;
+  } else if (lasso) {
+    var poly = [];
+    lasso.pts.forEach(function (p) { poly.push(round(p[0]), round(p[1])); });
+    lasso = null;
+    if (!cancelled && poly.length >= 6) send({ t: 'lasso', poly: poly });
+  } else if (sel && sel.drag) {
+    var d = sel.drag;
+    sel.drag = null;
+    sel.box = { x: sel.box.x + d.dx, y: sel.box.y + d.dy, w: sel.box.w, h: sel.box.h };
+    send({ t: 'moveEnd', dx: cancelled ? 0 : d.dx, dy: cancelled ? 0 : d.dy });
+    showSelBar();
+  }
+}
+
+function flushEraser(force) {
+  if (!eraser || !eraser.buf.length) return;
+  var now = Date.now();
+  if (!force && now - eraser.sentAt < 24) return;
+  var flat = [];
+  eraser.buf.forEach(function (p) { flat.push(round(p[0]), round(p[1])); });
+  var tail = eraser.buf[eraser.buf.length - 1];
+  eraser.buf = [tail];
+  eraser.sentAt = now;
+  send({ t: 'erase', g: eraser.g, r: ERASER_SIZES[prefs.eraserSize], pts: flat });
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar
+// ---------------------------------------------------------------------------
+var ICONS = {
+  pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 4.5l4 4L9 19l-5 1 1-5z"/><path d="M13.5 6.5l4 4"/></svg>',
+  marker: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14l-2.5 2.5V19h2.5L11 16.5"/><path d="M9 14l7.5-9.5 3 3L11 16.5z"/><path d="M4 21h9" stroke-width="2.6" opacity=".45"/></svg>',
+  eraser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 19.5L4 15a1.5 1.5 0 010-2.1l8.9-8.9a1.5 1.5 0 012.1 0l5 5a1.5 1.5 0 010 2.1l-8 8.4z"/><path d="M8.5 19.5H20"/><path d="M9 9.5l5.5 5.5"/></svg>',
+  lasso: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="2.6 2.6"><path d="M12 4c4.8 0 8 2.3 8 5.3S16.8 14.6 12 14.6 4 12.3 4 9.3 7.2 4 12 4z"/><path d="M7 13.5c-1 1.5-.6 3.3 1.1 4.2 1.4.7 1.9 1.8 1.4 3.3" stroke-dasharray="none"/></svg>',
+  shape: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8.5" r="4.5"/><path d="M15.5 10.5l5 9h-10z"/><path d="M3.5 19.5h6"/></svg>',
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7L4.5 11.5 9 16"/><path d="M5 11.5h9a5 5 0 010 10h-2"/></svg>',
+  redo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7l4.5 4.5L15 16"/><path d="M19 11.5h-9a5 5 0 000 10h2"/></svg>'
+};
+var TITLES = { pen: '钢笔 (P)', marker: '荧光笔 (H)', eraser: '橡皮擦 (E)', lasso: '套索 (L)', shape: '按住自动规整图形', undo: '撤销 ⌘Z', redo: '重做 ⇧⌘Z' };
+
+var bar = document.getElementById('bar');
+
+function el(tag, cls, html) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html) n.innerHTML = html;
+  return n;
+}
+
+function tap(node, fn) {
+  // pointerup instead of click: no 300 ms delay and works with the Pencil.
+  node.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+  node.addEventListener('pointerup', function (e) { e.stopPropagation(); e.preventDefault(); fn(e); });
+}
+
+function setTool(t) {
+  if (prefs.tool === t) return;
+  if (sel && t !== 'lasso') clearSelection(true);
+  prefs.tool = t;
+  cursor = null;
+  savePrefs();
+  renderBar();
+  schedule();
+}
+
+function savePrefs() {
+  send({ t: 'prefs', prefs: prefs });
+}
+
+function renderBar() {
+  bar.innerHTML = '';
+  ['pen', 'marker', 'eraser', 'lasso'].forEach(function (t) {
+    var b = el('button', 'btn' + (prefs.tool === t ? ' on' : ''), ICONS[t]);
+    b.title = TITLES[t];
+    tap(b, function () { setTool(t); });
+    bar.appendChild(b);
+  });
+  bar.appendChild(el('div', 'sep'));
+
+  var tool = prefs.tool;
+  var colors = null, colorKey = null;
+  if (tool === 'pen' || (tool === 'lasso' && sel)) { colors = PEN_COLORS; colorKey = 'penColor'; }
+  else if (tool === 'marker') { colors = MARKER_COLORS; colorKey = 'markerColor'; }
+  var cg = el('div', 'group colors');
+  if (colors) {
+    colors.forEach(function (c, i) {
+      var on = tool !== 'lasso' && prefs[colorKey] === i;
+      var b = el('button', 'sw' + (on ? ' on' : ''));
+      b.style.background = c;
+      tap(b, function () {
+        if (tool === 'lasso') {
+          send({ t: 'recolor', color: c });
+          return;
+        }
+        prefs[colorKey] = i;
+        savePrefs();
+        renderBar();
+      });
+      cg.appendChild(b);
+    });
+  } else {
+    var hint = el('span', 'hint');
+    hint.textContent = tool === 'eraser' ? '整笔擦除' : '圈选笔迹后可拖动';
+    cg.appendChild(hint);
+  }
+  bar.appendChild(cg);
+  bar.appendChild(el('div', 'sep'));
+
+  var sizes = null, sizeKey = null;
+  if (tool === 'pen') { sizes = PEN_SIZES; sizeKey = 'penSize'; }
+  else if (tool === 'marker') { sizes = MARKER_SIZES; sizeKey = 'markerSize'; }
+  else if (tool === 'eraser') { sizes = ERASER_SIZES; sizeKey = 'eraserSize'; }
+  var sg = el('div', 'group sizes');
+  if (sizes) {
+    sizes.forEach(function (s, i) {
+      var b = el('button', 'size' + (prefs[sizeKey] === i ? ' on' : ''));
+      var dot = el('i');
+      var px = [6, 10, 15][i];
+      dot.style.width = dot.style.height = px + 'px';
+      b.appendChild(dot);
+      tap(b, function () { prefs[sizeKey] = i; savePrefs(); renderBar(); });
+      sg.appendChild(b);
+    });
+  }
+  bar.appendChild(sg);
+  bar.appendChild(el('div', 'sep'));
+
+  var snap = el('button', 'btn' + (prefs.snap ? ' on' : ''), ICONS.shape);
+  snap.title = TITLES.shape;
+  tap(snap, function () {
+    prefs.snap = !prefs.snap;
+    savePrefs();
+    renderBar();
+    toast(prefs.snap ? '图形规整：开（画完按住不动）' : '图形规整：关');
+  });
+  bar.appendChild(snap);
+
+  var u = el('button', 'btn', ICONS.undo);
+  u.title = TITLES.undo;
+  u.disabled = !hist.canUndo;
+  tap(u, function () { send({ t: 'undo' }); });
+  bar.appendChild(u);
+  var r = el('button', 'btn', ICONS.redo);
+  r.title = TITLES.redo;
+  r.disabled = !hist.canRedo;
+  tap(r, function () { send({ t: 'redo' }); });
+  bar.appendChild(r);
+
+  var done = el('button', 'done');
+  done.textContent = '完成';
+  tap(done, function () { send({ t: 'close' }); });
+  bar.appendChild(done);
+}
+
+var selbar = document.getElementById('selbar');
+tap(document.getElementById('selDelete'), function () { send({ t: 'deleteSel' }); });
+tap(document.getElementById('selCancel'), function () { clearSelection(true); });
+
+function showSelBar() {
+  if (!sel || sel.drag) {
+    selbar.style.display = 'none';
+    return;
+  }
+  var b = sel.box;
+  selbar.style.display = 'flex';
+  var x = Math.max(8, Math.min(W - 180, b.x));
+  var y = b.y - 46;
+  if (y < 8) y = b.y + b.h + 10;
+  selbar.style.left = x + 'px';
+  selbar.style.top = y + 'px';
+}
+
+var toastTimer = 0;
+function toast(text) {
+  var t = document.getElementById('toast');
+  t.textContent = text;
+  t.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.style.display = 'none'; }, 1600);
+}
+
+// ---------------------------------------------------------------------------
+// API for the add-on
+// ---------------------------------------------------------------------------
+window.ink = {
+  ack: function (n) {
+    if (inflight && inflight.seq === n) {
+      inflight = null;
+      pump();
+    }
+  },
+  init: function (o) {
+    if (o.prefs) for (var k in o.prefs) if (k in prefs) prefs[k] = o.prefs[k];
+    zoom = o.z || 1;
+    hist = o.state || hist;
+    renderBar();
+  },
+  setZoom: function (z) {
+    zoom = z;
+  },
+  committed: function (o) {
+    if (o.state) ink.state(o.state);
+    // Keep the live copy one more frame so the native one is on screen first.
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        pending.delete(o.lid);
+        schedule();
+      });
+    });
+  },
+  state: function (s) {
+    var changed = s.canUndo !== hist.canUndo || s.canRedo !== hist.canRedo;
+    hist = s;
+    if (changed) renderBar();
+  },
+  selection: function (s) {
+    sel = s ? { box: { x: s.x, y: s.y, w: s.w, h: s.h }, n: s.n, drag: null } : null;
+    renderBar();
+    showSelBar();
+    schedule();
+  },
+  lassoResult: function (s) {
+    if (!s) toast('没有选中笔迹');
+    ink.selection(s);
+  },
+  error: function (msg) {
+    toast('MN Ink: ' + msg);
+  }
+};
+
+resize();
+renderBar();
+send({ t: 'ready' });
+</script>
+</body>
+</html>
