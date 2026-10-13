@@ -6,20 +6,30 @@
 // Brushes. thinning = how much pressure changes the width; alpha = ink opacity;
 // shape = width of a recognised shape relative to the brush size.
 var INK_BRUSHES = {
+  normal: { name: '普通', thinning: 0.38, smoothing: 0.5, streamline: 0.45, alpha: 1, shape: 0.82 },
+  ballpoint: { name: '等宽', thinning: 0.08, smoothing: 0.5, streamline: 0.45, alpha: 1, shape: 0.95 },
   fountain: { name: '钢笔', thinning: 0.62, smoothing: 0.55, streamline: 0.4, alpha: 1, shape: 0.72, ease: 'sine' },
-  ballpoint: { name: '圆珠笔', thinning: 0.18, smoothing: 0.5, streamline: 0.45, alpha: 1, shape: 0.9 },
   brush: { name: '毛笔', thinning: 0.9, smoothing: 0.62, streamline: 0.5, alpha: 1, shape: 0.6, ease: 'cubic', taper: 3 },
   pencil: { name: '铅笔', thinning: 0.4, smoothing: 0.4, streamline: 0.3, alpha: 0.78, shape: 0.8 },
+  watercolor: { name: '水彩', thinning: 0.5, smoothing: 0.75, streamline: 0.55, alpha: 0.42, shape: 1.2, soft: 0.6 },
+  crayon: { name: '蜡笔', thinning: 0.25, smoothing: 0.35, streamline: 0.3, alpha: 0.82, shape: 1, grain: true },
   marker: { name: '荧光笔', thinning: 0, smoothing: 0.7, streamline: 0.55, alpha: 0.36, shape: 1 }
 };
+var INK_PEN_TYPES = ['normal', 'ballpoint', 'fountain', 'brush', 'pencil', 'watercolor', 'crayon'];
 
 function inkBrushOf(tool, brush) {
   if (tool === 'marker') return 'marker';
   return INK_BRUSHES[brush] && brush !== 'marker' ? brush : 'fountain';
 }
 
-function inkBrushAlpha(brush) {
-  return (INK_BRUSHES[brush] || INK_BRUSHES.fountain).alpha;
+// Ink opacity: the brush's own alpha times the tool's opacity setting (0–1).
+function inkBrushAlpha(brush, op) {
+  var a = (INK_BRUSHES[brush] || INK_BRUSHES.fountain).alpha;
+  return op == null ? a : a * Math.max(0.05, Math.min(1, op));
+}
+
+function inkBrushInfo(brush) {
+  return INK_BRUSHES[brush] || INK_BRUSHES.fountain;
 }
 
 function inkShapeWidth(brush, size) {

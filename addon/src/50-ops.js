@@ -46,7 +46,7 @@ function inkRound(n) {
 function inkCopyStroke(s) {
   return {
     id: s.id, tool: s.tool, b: s.b, color: s.color, w: s.w, k: s.k, ps: s.ps, sim: s.sim, shape: s.shape,
-    closed: s.closed, dash: s.dash, fill: s.fill, a: s.a, pts: s.pts ? s.pts.slice() : []
+    closed: s.closed, dash: s.dash, fill: s.fill, op: s.op, l: s.l, a: s.a, pts: s.pts ? s.pts.slice() : []
   };
 }
 
@@ -87,7 +87,7 @@ function inkHistoryState() {
 }
 
 // Absolute surface points → a stroke in the right group (card or page).
-function inkMakeStroke(base, absPts, ctx, v) {
+function inkMakeStroke(base, absPts, ctx, v, forceKey) {
   var s = inkCopyStroke(base);
   s.id = base.id || inkNewId();
   s.pts = absPts;
@@ -99,7 +99,7 @@ function inkMakeStroke(base, absPts, ctx, v) {
   }
   var surf = inkSurf(ctx.kind);
   var place = surf ? surf.place : {};
-  var key = ctx.kind === 'map'
+  var key = forceKey && place[forceKey] ? forceKey : ctx.kind === 'map'
     ? inkPickAnchor(place, { x0: bx0, y0: by0, x1: bx1, y1: by1 })
     : inkPickPage(place, (bx0 + bx1) / 2, (by0 + by1) / 2);
   var p = key ? place[key] : null;
@@ -130,10 +130,13 @@ function inkCommitStroke(views, m) {
   var tool = m.tool === 'marker' ? 'marker' : 'pen';
   var s = inkMakeStroke({
     id: inkNewId(), tool: tool, b: inkBrushOf(tool, m.b), color: String(m.color || '#1d1d1f'), w: m.size / v.z,
-    ps: m.ps == null ? null : m.ps, sim: !!m.sim, shape: !!m.shape, closed: !!m.closed, dash: !!m.dash
-  }, pts, ctx, v);
+    ps: m.ps == null ? null : m.ps, sim: !!m.sim, shape: !!m.shape, closed: !!m.closed, dash: !!m.dash,
+    op: m.op == null || m.op >= 1 ? null : m.op, l: inkActiveLayer()
+  }, pts, ctx, v, inkBindTarget(views));
   if (!s) return null;
   if (s.ps == null) delete s.ps;
+  if (s.op == null) delete s.op;
+  if (s.l === 'default') delete s.l;
   inkApply({ add: [s], remove: [] });
   inkCommit(m.shape ? '图形' : '书写');
   return s;
@@ -235,7 +238,7 @@ function inkErase(views, m) {
   var eb = inkBBox(e);
   var removed = [], added = [];
   INK_STORE.strokes.forEach(function (s) {
-    if (!inkOnSurface(s, ctx)) return;
+    if (!inkEditable(s, ctx)) return;
     if (m.markerOnly && s.tool !== 'marker') return;
     var o = inkOrigin(s);
     if (!o) return;
@@ -321,7 +324,7 @@ function inkLasso(views, m) {
   var types = m.types || { pen: true, marker: true, shape: true };
   var ids = [];
   INK_STORE.strokes.forEach(function (s) {
-    if (!inkOnSurface(s, ctx) || types[inkTypeOf(s)] === false) return;
+    if (!inkEditable(s, ctx) || types[inkTypeOf(s)] === false) return;
     var o = inkOrigin(s);
     if (!o) return;
     var b = inkAbsBox(s, o);
@@ -349,7 +352,7 @@ function inkMovePreview(views, dx, dy) {
 }
 
 // Re-place a stroke after a transform of its absolute points.
-function inkTransformed(s, ctx, v, fn, wScale) {
+function inkTransformed(s, ctx, v, fn, wScale, forceKey) {
   var o = inkOrigin(s) || { x: 0, y: 0, s: 1 };
   var abs = [];
   inkTriples(s.pts).forEach(function (p) {
@@ -358,7 +361,7 @@ function inkTransformed(s, ctx, v, fn, wScale) {
   });
   var base = inkCopyStroke(s);
   base.w = s.w * o.s * (wScale || 1);
-  var t = inkMakeStroke(base, abs, ctx, { z: (s.k || 1) / (o.s || 1) });
+  var t = inkMakeStroke(base, abs, ctx, { z: (s.k || 1) / (o.s || 1) }, forceKey);
   return t;
 }
 
@@ -544,7 +547,7 @@ function inkSnapNodes(views) {
   if (!INK_STORE || !views || !views.active) return out;
   for (var i = 0; i < INK_STORE.strokes.length && out.length < 4000; i++) {
     var s = INK_STORE.strokes[i];
-    if (!s.shape || !inkOnSurface(s, views.active)) continue;
+    if (!s.shape || !inkOnSurface(s, views.active) || inkLayerHidden(inkLayerOfStroke(s))) continue;
     var o = inkOrigin(s);
     if (!o) continue;
     var tri = inkTriples(s.pts);
@@ -556,4 +559,193 @@ function inkSnapNodes(views) {
     }
   }
   return out;
+}
+
+// ---- layers / binding / picking / cards ------------------------------------------
+
+var INK_ACTIVE_LAYER_KEY = 'io.github.jacky1n7.mnink.activeLayer';
+
+// The active layer is a per-device view setting (not an undo step).
+function inkActiveLayer() {
+  var meta = INK_STORE && INK_STORE.meta;
+  if (!meta) return 'default';
+  try {
+    var all = JSON.parse(String(NSUserDefaults.standardUserDefaults().objectForKey(INK_ACTIVE_LAYER_KEY) || '{}'));
+    var id = all[INK_STORE.topicId];
+    if (id && meta.layers.some(function (l) { return l.id === id; })) return id;
+  } catch (e) {}
+  return meta.layers[0].id;
+}
+
+function inkSetActiveLayer(id) {
+  var all = {};
+  try {
+    all = JSON.parse(String(NSUserDefaults.standardUserDefaults().objectForKey(INK_ACTIVE_LAYER_KEY) || '{}'));
+  } catch (e) {}
+  all[INK_STORE.topicId] = id;
+  NSUserDefaults.standardUserDefaults().setObjectForKey(JSON.stringify(all), INK_ACTIVE_LAYER_KEY);
+}
+
+// Strokes that eraser / lasso may touch: on this surface, in the active, visible layer.
+function inkEditable(s, ctx) {
+  if (!inkOnSurface(s, ctx)) return false;
+  var l = inkLayerOfStroke(s);
+  return l === inkActiveLayer() && !inkLayerHidden(l);
+}
+
+function inkLayersInfo() {
+  var meta = INK_STORE ? INK_STORE.meta : inkDefaultMeta();
+  var counts = {};
+  (INK_STORE ? INK_STORE.strokes : []).forEach(function (s) {
+    var l = inkLayerOfStroke(s);
+    counts[l] = (counts[l] || 0) + 1;
+  });
+  return {
+    active: inkActiveLayer(),
+    layers: meta.layers.map(function (l) { return { id: l.id, name: l.name, hidden: !!l.hidden, n: counts[l.id] || 0 }; })
+  };
+}
+
+function inkLayerOp(addon, m) {
+  var store = INK_STORE;
+  if (!store || store.file) return '笔迹暂存在本机文件里时不支持图层';
+  var meta = store.meta;
+  var layer = null;
+  for (var i = 0; i < meta.layers.length; i++) if (meta.layers[i].id === m.id) layer = meta.layers[i];
+  if (m.op === 'add') {
+    var id = 'L' + inkNewId();
+    meta.layers.push({ id: id, name: String(m.name || '图层 ' + (meta.layers.length + 1)), hidden: false });
+    inkSaveMeta('新建图层');
+    inkSetActiveLayer(id);
+  } else if (m.op === 'activate' && layer) {
+    inkSetActiveLayer(layer.id);
+  } else if (m.op === 'rename' && layer) {
+    layer.name = String(m.name || layer.name).slice(0, 40);
+    inkSaveMeta('重命名图层');
+  } else if (m.op === 'toggle' && layer) {
+    layer.hidden = !layer.hidden;
+    inkSaveMeta(layer.hidden ? '隐藏图层' : '显示图层');
+    inkRerenderAll(addon);
+  } else if (m.op === 'delete' && layer) {
+    if (meta.layers.length <= 1) return '至少要保留一个图层';
+    var doomed = store.strokes.filter(function (s) { return inkLayerOfStroke(s) === layer.id; });
+    UndoManager.sharedInstance().undoGrouping('MN Ink: 删除图层', store.topicId, function () {
+      if (doomed.length) {
+        inkApply({ add: [], remove: doomed });
+        inkCommit('删除图层');
+      }
+      meta.layers = meta.layers.filter(function (l) { return l.id !== layer.id; });
+      inkSaveMeta('删除图层');
+    });
+    if (inkActiveLayer() === layer.id) inkSetActiveLayer(meta.layers[0].id);
+  }
+  INK_SEL = null;
+  return null;
+}
+
+// "Bind handwriting to the selected card": the mind map's focused card, if visible.
+function inkBindTarget(views) {
+  var p = inkLoadPrefs();
+  if (!p || !p.bindSelected || !views.active || views.active.kind !== 'map') return null;
+  var nc = views.sc.notebookController;
+  var fn = nc ? nc.focusNote : null;
+  return fn ? String(fn.noteId) : null;
+}
+
+// Card under a screen point (smallest frame containing it).
+function inkCardAt(views, x, y) {
+  if (!views.active || views.active.kind !== 'map') return null;
+  var v = inkView(views);
+  var c = inkToCanvas(v, x, y);
+  var surf = inkSurf('map');
+  var best = null, area = Infinity;
+  for (var id in (surf ? surf.place : {})) {
+    var f = surf.place[id];
+    if (c[0] >= f.x && c[0] <= f.x + f.w && c[1] >= f.y && c[1] <= f.y + f.h && f.w * f.h < area) {
+      best = id;
+      area = f.w * f.h;
+    }
+  }
+  return best;
+}
+
+function inkBindSelectionAt(views, m) {
+  var key = inkCardAt(views, m.x, m.y);
+  if (!key) return '这里没有卡片';
+  var v = inkView(views);
+  var olds = inkSelected();
+  if (!olds.length) return null;
+  inkReplaceSelection(olds.map(function (s) {
+    return inkTransformed(s, views.active, v, function (x, y) { return [x, y]; }, 1, key);
+  }), olds, '绑定到卡片');
+  return null;
+}
+
+function inkTapCard(views, m) {
+  var key = inkCardAt(views, m.x, m.y);
+  if (key) views.sc.focusNoteInMindMapById(key);
+  return !!key;
+}
+
+// Eyedropper: the colour of the visible stroke nearest to a screen point.
+function inkPick(views, m) {
+  var ctx = views.active;
+  var v = inkView(views);
+  var p = inkToCanvas(v, m.x, m.y);
+  var best = null, bestD = 14 / v.z;
+  INK_STORE.strokes.forEach(function (s) {
+    if (!inkOnSurface(s, ctx) || inkLayerHidden(inkLayerOfStroke(s))) return;
+    var o = inkOrigin(s);
+    if (!o) return;
+    var pts = inkAbsPoints(s, o);
+    for (var i = 1; i < pts.length; i++) {
+      var d = inkDistToSegment(p, pts[i - 1], pts[i]) - inkAbsWidth(s, o) / 2;
+      if (d < bestD) {
+        bestD = d;
+        best = s;
+      }
+    }
+  });
+  return best ? { color: best.color, op: best.op == null ? 1 : best.op, tool: best.tool, b: inkBrushOf(best.tool, best.b) } : null;
+}
+
+// Geometry of the selection in screen units, for the page to rasterise.
+function inkSelectionDrawing(views) {
+  var v = inkView(views);
+  return inkSelected().map(function (s) {
+    var o = inkOrigin(s) || { x: 0, y: 0, s: 1 };
+    var pts = [];
+    inkTriples(s.pts).forEach(function (p) {
+      var q = inkToScreen(v, p[0] * o.s + o.x, p[1] * o.s + o.y);
+      pts.push(Math.round(q[0] * 10) / 10, Math.round(q[1] * 10) / 10, p[2]);
+    });
+    return {
+      tool: s.tool, b: inkBrushOf(s.tool, s.b), color: s.color, op: s.op == null ? 1 : s.op, size: s.w * o.s * v.z,
+      ps: s.ps, sim: s.sim, shape: !!s.shape, closed: !!s.closed, dash: !!s.dash, pts: pts
+    };
+  });
+}
+
+// Turn the selection into a card holding it as an image (one undo step).
+function inkCreateCard(views, m) {
+  var sel = inkSelected();
+  if (!sel.length || !m.png) return '没有选中笔迹';
+  var db = inkDb();
+  var T = views.topicId;
+  var a = sel[0].a;
+  var parent = a && a.indexOf('page:') !== 0 ? db.getNoteById(a) : null;
+  var note = null;
+  UndoManager.sharedInstance().undoGrouping('MN Ink: 转为卡片', T, function () {
+    note = db.createNoteWithTitleTopicid('', T);
+    note.excerptTextMarkdown = 1;
+    note.excerptText = '![手写](data:image/png;base64,' + m.png + ')';
+    if (parent) parent.addChild(note);
+    if (!m.keep) {
+      inkApply({ add: [], remove: sel });
+      inkCommit('转为卡片');
+    }
+  });
+  INK_SEL = null;
+  inkApp().refreshAfterDBChanged(T);
+  return null;
 }

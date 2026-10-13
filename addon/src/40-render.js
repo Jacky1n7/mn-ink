@@ -176,23 +176,40 @@ function inkStrokePath(s, sc) {
 }
 
 function inkMakeLayer(s, sc) {
+  sc = sc || 1;
   var path = inkStrokePath(s, sc);
   if (!path) return null;
   var brush = inkBrushOf(s.tool, s.b);
-  var alpha = inkBrushAlpha(brush);
+  var info = inkBrushInfo(brush);
+  var alpha = inkBrushAlpha(brush, s.op);
   var layer = CAShapeLayer.new();
   layer.path = path;
   if (s.shape) {
-    var lw = inkShapeWidth(brush, s.w) * (sc || 1);
+    var lw = inkShapeWidth(brush, s.w) * sc;
     layer.fillColor = s.fill ? inkColor(s.fill, 0.18) : UIColor.clearColor();
     layer.strokeColor = inkColor(s.color, alpha);
     layer.lineWidth = lw;
     layer.lineCap = 'round';
     layer.lineJoin = 'round';
     if (s.dash) layer.lineDashPattern = [lw * 2.6, lw * 2.2];
+  } else if (info.grain) {
+    // Crayon: lighter fill plus a broken outline for a waxy, grainy edge.
+    var gw = s.w * sc;
+    layer.fillColor = inkColor(s.color, alpha * 0.72);
+    layer.strokeColor = inkColor(s.color, alpha);
+    layer.lineWidth = Math.max(0.3, gw * 0.18);
+    layer.lineDashPattern = [gw * 0.12, gw * 0.2, gw * 0.3, gw * 0.15];
+    layer.lineJoin = 'round';
   } else {
     layer.fillColor = inkColor(s.color, alpha);
     layer.strokeColor = UIColor.clearColor();
+  }
+  if (info.soft) {
+    // Watercolor: soft, bleeding edge.
+    layer.shadowColor = inkColor(s.color, 1);
+    layer.shadowOpacity = 0.9;
+    layer.shadowRadius = Math.max(1, s.w * sc * info.soft);
+    layer.shadowOffset = { width: 0, height: 0 };
   }
   return layer;
 }
@@ -262,6 +279,7 @@ function inkPlaceGroup(key, g, p) {
 function inkRenderStroke(s) {
   var surf = INK_SURF[inkSurfaceKind(s)];
   if (!surf) return;
+  if (inkLayerHidden(inkLayerOfStroke(s))) return;
   if (surf.kind === 'doc' && s.a.indexOf('page:' + surf.md5 + ':') !== 0) return;
   var g = inkGroup(surf, inkGroupKey(s));
   var layer = inkMakeLayer(s, g.s);

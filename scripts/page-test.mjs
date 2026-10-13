@@ -44,6 +44,9 @@ const harness = `<script>
       if (m.t === 'editEnd') ink.selection({ n: 1, x: 100, y: 100, w: 140, h: 80, shape: { id: 'S1', closed: true, pts: m.pts || [], color: '#d7262b', width: 2, alpha: 1, dash: false } });
       if (m.t === 'xformEnd' || m.t === 'moveEnd') ink.selection(SEL);
       if (m.t === 'copy') ink.clip(2);
+      if (m.t === 'pick') ink.picked({ color: '#123456', op: 1 });
+      if (m.t === 'cardDrawing') ink.cardDrawing([{ tool: 'pen', b: 'fountain', color: '#1f4fd1', op: 1, size: 3, ps: 0.6, sim: false, shape: false, pts: [100, 100, 0.5, 140, 120, 0.6, 180, 100, 0.5] }]);
+      if (m.t === 'layer') ink.layers({ active: m.op === 'add' ? 'L2' : 'default', layers: [{ id: 'default', name: '默认图层', hidden: false, n: 3 }].concat(m.op === 'add' ? [{ id: 'L2', name: '图层 2', hidden: false, n: 0 }] : []) });
     });
     ink.ack(batch.seq);
   }
@@ -80,7 +83,7 @@ const harness = `<script>
 
   if (SCEN === 'popover') {
     later(50, function () { prefs.grid = 'square'; drawGrid(); });
-    later(50, function () { tapEl(toolBtn('pen')); });
+    later(50, function () { tapEl(toolBtn('pen1')); });
     later(50, function () { out.popover = !!document.querySelector('.pop'); });
     run();
     return;
@@ -117,30 +120,48 @@ const harness = `<script>
   later(60, function () { tapEl(document.getElementById('selCopy')); });
   later(60, function () { clearSelection(true); stroke([[700, 600], [700.5, 600.5]], 'mouse'); });
   later(60, function () { out.pasteShown = getComputedStyle(document.getElementById('pastebar')).display !== 'none'; tapEl(document.getElementById('pasteBtn')); });
-  // 8. laser sends nothing
+  // 8. laser and vanish-mode strokes send nothing
   later(60, function () { setTool('laser'); out.sentBeforeLaser = __sent.length; stroke([[100, 100], [200, 150], [300, 120]], 'mouse'); });
-  later(80, function () { out.laserSentNothing = __sent.filter(function (m) { return m.t === 'stroke' || m.t === 'erase'; }).length === __sent.slice(0, out.sentBeforeLaser).filter(function (m) { return m.t === 'stroke' || m.t === 'erase'; }).length; out.laserPoints = laser.length; });
-  // 9. finger pan + pinch
+  later(80, function () { out.laserPoints = laser.length; setTool('pen1'); activeSlot().vanish = true; stroke([[100, 300], [200, 330], [300, 310]]); });
+  later(60, function () { out.vanishing = vanishing.length; activeSlot().vanish = false; out.noStrokeSent = __sent.slice(out.sentBeforeLaser).filter(function (m) { return m.t === 'stroke'; }).length === 0; });
+  // 9. straight 'always', opacity, brush type travel in the stroke message
+  later(60, function () { var s = activeSlot(); s.straight = 'always'; s.op = 0.5; s.brush = 'watercolor'; stroke([[100, 400], [150, 420], [200, 390], [260, 430]]); });
+  later(60, function () { var m = __sent.filter(function (x) { return x.t === 'stroke'; }).pop(); out.straightMsg = [m.shape, m.op, m.b]; var s = activeSlot(); s.straight = 'off'; s.op = 1; s.brush = 'fountain'; });
+  // 10. ruler: a stroke started at the ruler edge comes out straight along it
+  later(60, function () { prefs.ruler = true; ruler = { x: 500, y: 300, a: 0, len: 600, th: 64 }; stroke([[400, 336], [450, 345], [500, 330], [560, 350]]); });
+  later(60, function () { var m = __sent.filter(function (x) { return x.t === 'stroke'; }).pop(); var ys = []; for (var i = 1; i < m.pts.length; i += 3) ys.push(m.pts[i]); out.rulerFlat = Math.max.apply(null, ys) - Math.min.apply(null, ys); prefs.ruler = false; });
+  // 11. eyedropper, clone slot, layers, convert to card
+  later(60, function () { startEyedrop(); stroke([[300, 300], [300.5, 300.5]], 'mouse'); });
+  later(60, function () { out.picked = activeSlot().color; var n = prefs.slots.length; openPop('slot', toolBtn('pen1'), buildSlotPop()); var clone = Array.from(document.querySelectorAll('.pop .mini')).find(function (b) { return b.textContent === '复制为新工具'; }); tapEl(clone); out.slotsAfterClone = prefs.slots.length - n; closePopover(); });
+  later(60, function () { send({ t: 'layer', op: 'add' }); });
+  later(60, function () { out.layers = layersInfo.layers.length + ':' + layersInfo.active; send({ t: 'cardDrawing' }); });
+  later(120, function () { var m = __sent.filter(function (x) { return x.t === 'createCard'; }).pop(); out.cardPng = m ? m.png.length : 0; });
+  // 12. finger pan, two-finger tap = undo
   later(60, function () {
-    setTool('pen');
+    setTool(prefs.slots[0].id);
     ev('pointerdown', 500, 500, 'touch'); ev('pointermove', 520, 530, 'touch'); ev('pointerup', 520, 530, 'touch');
     out.viewAfterPan = [Math.round(view.ox), Math.round(view.oy), view.z];
+    var before = __sent.filter(function (x) { return x.t === 'undo'; }).length;
+    var a = new PointerEvent('pointerdown', { pointerId: 21, pointerType: 'touch', clientX: 300, clientY: 300, bubbles: true });
+    var b = new PointerEvent('pointerdown', { pointerId: 22, pointerType: 'touch', clientX: 340, clientY: 300, bubbles: true });
+    cv.dispatchEvent(a); cv.dispatchEvent(b);
+    cv.dispatchEvent(new PointerEvent('pointerup', { pointerId: 21, pointerType: 'touch', clientX: 300, clientY: 300, bubbles: true }));
+    cv.dispatchEvent(new PointerEvent('pointerup', { pointerId: 22, pointerType: 'touch', clientX: 340, clientY: 300, bubbles: true }));
+    out.twoFingerUndoBefore = before;
   });
-  // 10. every popover opens; palette hex input; size % slider
+  later(60, function () { out.twoFingerUndo = __sent.filter(function (x) { return x.t === 'undo'; }).length - out.twoFingerUndoBefore; });
+  // 13. hand tool pans with the mouse
+  later(60, function () { setTool('hand'); var v0 = view.ox; stroke([[300, 300], [340, 300], [380, 300]], 'mouse'); out.handPanned = Math.round(v0 - view.ox); });
+  // 14. every popover opens; palette hex input; size slider
   later(60, function () {
-    TOOLS.forEach(function (k) { setTool(k); tapEl(toolBtn(k)); out['pop_' + k] = !!document.querySelector('.pop'); closePopover(); });
-    tapEl(toolBtn('grid')); out.pop_grid = !!document.querySelector('.pop'); closePopover();
-    setTool('pen');
-    var sw = document.querySelector('.sw.on'); tapEl(sw);
+    ['shape', 'eraser', 'lasso'].forEach(function (k) { setTool(k); tapEl(toolBtn(k)); out['pop_' + k] = !!document.querySelector('.pop'); closePopover(); });
+    setTool('pen1'); tapEl(toolBtn('pen1')); out.pop_slot = !!document.querySelector('.pop .brushes'); closePopover();
+    tapEl(toolBtn('layers')); out.pop_layers = !!document.querySelector('.pop .layer'); closePopover();
+    tapEl(toolBtn('settings')); out.pop_settings = !!document.querySelector('.pop .toggle'); closePopover();
+    var sw = document.querySelector('.sw.on') || document.querySelector('.sw'); tapEl(sw); tapEl(document.querySelector('.sw.on') || sw);
     var hex = document.querySelector('.hexrow input[type=text]');
-    hex.value = '#12AB34'; hex.dispatchEvent(new Event('input'));
-    tapEl(document.querySelector('.hexrow .mini'));
-    out.hexApplied = prefs.penColors[prefs.penColor];
-    out.recent = prefs.recentColors.slice(0, 1);
-    var sz = document.querySelector('.size.on'); tapEl(sz);
-    var range = document.querySelector('.slider input'); range.value = 200; range.dispatchEvent(new Event('input'));
-    out.sizeAt200 = prefs.penSizes[prefs.penSize];
-    closePopover();
+    if (hex) { hex.value = '#12AB34'; hex.dispatchEvent(new Event('input')); tapEl(document.querySelector('.hexrow .mini')); }
+    out.hexApplied = activeSlot().color;
     out.surfaceSwitch = !!document.querySelector('.surf');
   });
   run();

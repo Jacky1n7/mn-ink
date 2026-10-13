@@ -158,8 +158,39 @@ function inkHandleMsg(views, m) {
       inkCall('init', {
         prefs: inkLoadPrefs(), view: inkViewInfo(views), state: inkHistoryState(), nodes: inkSnapNodes(views),
         surface: INK_UI.surface, surfaces: { map: !!views.map, doc: !!views.doc }, clip: !!(INK_CLIP && INK_CLIP.length),
-        storage: INK_STORE && INK_STORE.file ? 'file' : 'notebook', version: INK_VERSION
+        storage: INK_STORE && INK_STORE.file ? 'file' : 'notebook', version: INK_VERSION, layers: inkLayersInfo()
       });
+      break;
+    case 'pick':
+      inkCall('picked', inkPick(views, m));
+      break;
+    case 'bindAt': {
+      var berr = inkBindSelectionAt(views, m);
+      if (berr) inkCall('error', berr);
+      else inkCall('toast', '已绑定到这张卡片');
+      inkPushState(views, { nodes: true, sel: true });
+      break;
+    }
+    case 'cardDrawing':
+      inkCall('cardDrawing', inkSelectionDrawing(views));
+      break;
+    case 'createCard': {
+      var cerr = inkCreateCard(views, m);
+      if (cerr) inkCall('error', cerr);
+      else inkCall('toast', '已转为卡片');
+      inkPushState(views, { nodes: true, sel: true });
+      break;
+    }
+    case 'layer': {
+      var lerr = inkLayerOp(INK_UI.addon, m);
+      if (lerr) inkCall('error', lerr);
+      views = inkFindViews(INK_UI.addon) || views;
+      inkCall('layers', inkLayersInfo());
+      inkPushState(views, { nodes: true, sel: true });
+      break;
+    }
+    case 'tapCard':
+      inkTapCard(views, m);
       break;
     case 'view':
       inkApplyView(views, m);
@@ -239,6 +270,7 @@ function inkHandleMsg(views, m) {
       inkUndoRedo(INK_UI.addon, m.t === 'redo');
       if (!INK_UI) break;
       views = inkFindViews(INK_UI.addon) || views;
+      inkCall('layers', inkLayersInfo());
       inkPushState(views, { nodes: true, sel: true });
       break;
     case 'prefs':

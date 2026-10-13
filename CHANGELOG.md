@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4.0 — 2026-10-13
+
+Feature parity with MarginNote's built-in pen mode (checked item by item against MN 4.4.6):
+
+- **Tool slots like MarginNote**: any number of pens / highlighters; *Clone As New Tool* and *Delete*; keys 1–9.
+- **Pen types**: normal, mono, fountain, brush, pencil, **watercolor**, **crayon** (MN: Normal / Mono / Fountain / Pencil / Water / Crayon).
+- Per-tool **opacity**, separate **sizes for mind map and PDF** (MN: Doc / Map), **straight line Off / Auto / Always**, **vanish mode**, **perfect shape** toggle.
+- **Ruler**: drag / rotate (15° steps), strokes started at its edge are drawn straight along it.
+- **Eyedropper** in the colour row and palette.
+- **Sketch layers**: create, rename, hide, delete; drawing / erasing / lasso act on the active layer (stored in the notebook, undoable).
+- **Hand tool** for panning; **double tap a card to focus**; two-finger tap = undo, three-finger tap = redo.
+- **Bind handwriting to the selected card** option, and *bind selection to a card* from the lasso.
+- **Lasso → Create Card**: the selection becomes a new card holding it as an image (one undo step).
+
 ## v0.3.0 — 2026-10-12
 
 First public release.

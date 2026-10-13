@@ -36,7 +36,10 @@ function inkTick(addon) {
   if (!views) return;
   if (INK_TICKS % 8 === 0 && inkReloadIfChanged()) {
     inkRerenderAll(addon);
-    if (INK_UI) inkPushState(inkFindViews(addon) || views, { nodes: true, sel: true });
+    if (INK_UI) {
+      inkCall('layers', inkLayersInfo());
+      inkPushState(inkFindViews(addon) || views, { nodes: true, sel: true });
+    }
   }
   if (INK_TICKS % 8 === 0) inkHookMNPens(addon, views);
   if (INK_UI) inkGuardMNPen(addon);
@@ -143,6 +146,7 @@ function inkOnUndoChange(addon) {
       var views = inkRerenderAll(addon);
       if (INK_UI && views) {
         views = inkFindViews(addon) || views;
+        inkCall('layers', inkLayersInfo());
         inkPushState(views, { nodes: true, sel: true });
       }
     });

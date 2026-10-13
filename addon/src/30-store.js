@@ -66,7 +66,60 @@ function inkCleanStroke(s) {
   if (s.closed) o.closed = true;
   if (s.dash) o.dash = true;
   if (s.fill) o.fill = s.fill;
+  if (s.op != null && s.op < 1) o.op = s.op;
+  if (s.l && s.l !== 'default') o.l = s.l;
   return o;
+}
+
+// ---- sketch layers -------------------------------------------------------------
+// Stored as one more comment: "mnink:meta:v1\n{layers: [{id, name, hidden}], active}".
+
+var INK_META_PREFIX = 'mnink:meta:v1\n';
+
+function inkDefaultMeta() {
+  return { layers: [{ id: 'default', name: '默认图层', hidden: false }], active: 'default' };
+}
+
+function inkParseMeta(note) {
+  var c = note ? note.comments || [] : [];
+  for (var i = 0; i < c.length; i++) {
+    var t = String(c[i].text || '');
+    if (t.indexOf(INK_META_PREFIX) !== 0) continue;
+    try {
+      var m = JSON.parse(t.slice(INK_META_PREFIX.length));
+      if (m && m.layers && m.layers.length) {
+        if (!m.layers.some(function (l) { return l.id === m.active; })) m.active = m.layers[0].id;
+        return m;
+      }
+    } catch (e) {}
+  }
+  return inkDefaultMeta();
+}
+
+function inkLayerOfStroke(s) {
+  return s.l || 'default';
+}
+
+function inkLayerHidden(id) {
+  var m = INK_STORE && INK_STORE.meta;
+  if (!m) return false;
+  for (var i = 0; i < m.layers.length; i++) if (m.layers[i].id === id) return !!m.layers[i].hidden;
+  return false;
+}
+
+function inkSaveMeta(label) {
+  var store = INK_STORE;
+  if (!store || store.file) return;
+  var note = inkStorageNote();
+  if (!note) return;
+  UndoManager.sharedInstance().undoGrouping('MN Ink: ' + (label || '图层'), store.topicId, function () {
+    var c = note.comments || [];
+    for (var i = c.length - 1; i >= 0; i--) {
+      if (String(c[i].text || '').indexOf(INK_META_PREFIX) === 0) note.removeCommentByIndex(i);
+    }
+    note.appendTextComment(INK_META_PREFIX + JSON.stringify(store.meta));
+  });
+  store.sig = inkNoteSig(inkDb().getNoteById(store.noteId));
 }
 
 // ---- storage note -----------------------------------------------------------
@@ -220,7 +273,7 @@ function inkLoadFile(topicId) {
 }
 
 function inkLoadStore(topicId) {
-  var store = { topicId: topicId, strokes: [], byId: {}, noteId: null, sig: '', file: false, dirty: {} };
+  var store = { topicId: topicId, strokes: [], byId: {}, noteId: null, sig: '', file: false, dirty: {}, meta: inkDefaultMeta() };
   var note = inkFindStorageNote(topicId);
   var legacy = inkLoadFile(topicId);
   if (!note && legacy && legacy.length) note = inkCreateStorageNote(topicId);
@@ -228,6 +281,7 @@ function inkLoadStore(topicId) {
     store.noteId = String(note.noteId);
     inkUpgradeHeader(note, topicId);
     store.strokes = inkParseGroups(note);
+    store.meta = inkParseMeta(note);
     if (legacy && legacy.length && !store.strokes.length) {
       // Move ink from the old JSON file into the notebook (one undo step).
       store.strokes = legacy;
@@ -337,6 +391,7 @@ function inkReloadIfChanged() {
   if (sig === store.sig) return false;
   store.sig = sig;
   store.strokes = inkParseGroups(note);
+  store.meta = inkParseMeta(note);
   store.byId = {};
   store.strokes.forEach(function (s) { store.byId[s.id] = s; });
   return true;
