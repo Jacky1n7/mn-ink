@@ -67,7 +67,7 @@ test('a "2"-like stroke is left alone', () => {
 });
 
 // ---- √ recognition ----------------------------------------------------------
-const { inkRecognizeRadical, inkAdjustShape, inkSnapShape } = ctx;
+const { inkRecognizeRadical, inkAdjustShape, inkSnapShape, inkDist } = ctx;
 const userRadicals = JSON.parse(fs.readFileSync(new URL('./fixtures/radicals.json', import.meta.url), 'utf8'));
 
 test('the user\'s own √ strokes are recognised', () => {
@@ -140,12 +140,20 @@ test('a one-stroke arrow is recognised', () => {
 test('the user\'s √ is still a radical, not an arc or arrow', () => {
   for (const pts of userRadicals) assert.equal(inkRecognizeShape(pts.map(([x, y]) => [x, y, 0.5]))?.kind, 'radical');
 });
-test('dragging an arc extends it along the circle', () => {
+test('dragging an arc keeps its start fixed and scales / turns it about the start', () => {
   const arc = [];
   for (let i = 0; i <= 40; i++) { const a = Math.PI + (i / 40) * (Math.PI / 2); arc.push([200 + 100 * Math.cos(a), 200 + 100 * Math.sin(a)]); }
   const base = inkRecognizeShape(arc);
-  const end = [200 + 100 * Math.cos(2 * Math.PI), 200 + 100 * Math.sin(2 * Math.PI)];
-  const r = inkAdjustShape(base, base.pts[base.pts.length - 1], end);
+  const st = base.pts[0], e0 = base.pts[base.pts.length - 1];
+  // drag the end twice as far from the start, same direction
+  const target = [st[0] + (e0[0] - st[0]) * 2, st[1] + (e0[1] - st[1]) * 2];
+  const r = inkAdjustShape(base, e0, target);
+  assert.ok(Math.hypot(r.pts[0][0] - st[0], r.pts[0][1] - st[1]) < 1e-6, 'start fixed');
   const last = r.pts[r.pts.length - 1];
-  assert.ok(Math.hypot(last[0] - end[0], last[1] - end[1]) < 2);
+  assert.ok(Math.hypot(last[0] - target[0], last[1] - target[1]) < 1e-6, 'end at pen');
+  assert.ok(Math.abs(r.arc.r - base.arc.r * 2) < 1e-6, 'radius scaled');
+  assert.ok(Math.abs(r.arc.sweep - base.arc.sweep) < 1e-9, 'same sweep');
+  // and a drag sideways turns it, still anchored at the start
+  const r2 = inkAdjustShape(base, e0, [st[0], st[1] - inkDist(st, e0)]);
+  assert.ok(Math.hypot(r2.pts[0][0] - st[0], r2.pts[0][1] - st[1]) < 1e-6);
 });

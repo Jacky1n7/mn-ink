@@ -44,6 +44,7 @@ const harness = `<script>
       if (m.t === 'editEnd') ink.selection({ n: 1, x: 100, y: 100, w: 140, h: 80, shape: { id: 'S1', closed: true, pts: m.pts || [], color: '#d7262b', width: 2, alpha: 1, dash: false } });
       if (m.t === 'xformEnd' || m.t === 'moveEnd') ink.selection(SEL);
       if (m.t === 'copy') ink.clip(2);
+      if (m.t === 'dblTap') (m.dots || []).forEach(function (d) { ink.committed({ lid: d.lid, ok: false, state: { canUndo: true, canRedo: false } }); });
       if (m.t === 'pick') ink.picked({ color: '#123456', op: 1 });
       if (m.t === 'cardDrawing') ink.cardDrawing([{ tool: 'pen', b: 'fountain', color: '#1f4fd1', op: 1, size: 3, ps: 0.6, sim: false, shape: false, pts: [100, 100, 0.5, 140, 120, 0.6, 180, 100, 0.5] }]);
       if (m.t === 'layer') ink.layers({ active: m.op === 'add' ? 'L2' : 'default', layers: [{ id: 'default', name: '默认图层', hidden: false, n: 3 }].concat(m.op === 'add' ? [{ id: 'L2', name: '图层 2', hidden: false, n: 0 }] : []) });
@@ -152,6 +153,10 @@ const harness = `<script>
   later(60, function () { out.twoFingerUndo = __sent.filter(function (x) { return x.t === 'undo'; }).length - out.twoFingerUndoBefore; });
   // 13. hand tool pans with the mouse
   later(60, function () { setTool('hand'); var v0 = view.ox; stroke([[300, 300], [340, 300], [380, 300]], 'mouse'); out.handPanned = Math.round(v0 - view.ox); });
+  // 13b. two mouse taps on one spot = double tap (no dots); a single tap = a dot
+  later(60, function () { setTool('pen1'); out.sentBeforeTaps = __sent.length; stroke([[600, 600], [600.5, 600.5]], 'mouse'); stroke([[601, 600], [601.3, 600.2]], 'mouse'); });
+  later(60, function () { var m = __sent.slice(out.sentBeforeTaps); out.dblTap = m.map(function (x) { return x.t; }).join(','); stroke([[700, 600], [700.5, 600.5]], 'mouse'); });
+  later(450, function () { var m = __sent.slice(out.sentBeforeTaps); out.afterSingle = m.map(function (x) { return x.t; }).join(','); });
   // 14. every popover opens; palette hex input; size slider
   later(60, function () {
     ['shape', 'eraser', 'lasso'].forEach(function (k) { setTool(k); tapEl(toolBtn(k)); out['pop_' + k] = !!document.querySelector('.pop'); closePopover(); });

@@ -681,10 +681,40 @@ function inkBindSelectionAt(views, m) {
   return null;
 }
 
+// Double tap on a card: select it, then run MarginNote's own "Focus" command
+// (the card's branch becomes a focus layer, as with MN's pen settings
+// "Double Tap the Card to Enter the Focus"). FocusNote acts on the selected
+// card, and the selection only lands after focusNoteInMindMapById's animation.
 function inkTapCard(views, m) {
   var key = inkCardAt(views, m.x, m.y);
-  if (key) views.sc.focusNoteInMindMapById(key);
-  return !!key;
+  if (!key) return false;
+  var sc = views.sc;
+  sc.focusNoteInMindMapById(key);
+  var tries = 0;
+  var go = function () {
+    inkSafe(function () {
+      var nc = sc.notebookController;
+      var fn = nc ? nc.focusNote : null;
+      if ((!fn || String(fn.noteId) !== key) && ++tries < 6) {
+        NSTimer.scheduledTimerWithTimeInterval(0.15, false, go);
+        return;
+      }
+      inkApp().processCommandWithKeyFlagsInWindow('FocusNote', 0, INK_ADDONS[0].window);
+      // The canvas is rebuilt for the focus layer; re-attach the ink right away.
+      NSTimer.scheduledTimerWithTimeInterval(0.35, false, function () {
+        inkSafe(function () {
+          var v = inkSync(INK_ADDONS[0]);
+          if (INK_UI && v && v.active) {
+            INK_UI.web.frame = v.active.host.frame;
+            inkCall('setView', inkSurfView(v.active));
+            inkPushState(v, { nodes: true, sel: true });
+          }
+        });
+      });
+    });
+  };
+  NSTimer.scheduledTimerWithTimeInterval(0.25, false, go);
+  return true;
 }
 
 // Eyedropper: the colour of the visible stroke nearest to a screen point.

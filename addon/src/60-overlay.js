@@ -190,7 +190,20 @@ function inkHandleMsg(views, m) {
       break;
     }
     case 'tapCard':
-      inkTapCard(views, m);
+      if (inkTapCard(views, m)) inkCall('toast', '聚焦到这张卡片');
+      else inkCall('toast', '这里没有卡片');
+      break;
+    case 'dblTap':
+      // Two quick dots in the same spot: focus the card under them, or keep
+      // the dots when there is no card (they were just dots).
+      if (!inkTapCard(views, m)) {
+        (m.dots || []).forEach(function (d) {
+          var s2 = inkCommitStroke(views, d);
+          inkCall('committed', { lid: d.lid, ok: !!s2, state: inkHistoryState() });
+        });
+      } else {
+        (m.dots || []).forEach(function (d) { inkCall('committed', { lid: d.lid, ok: false, state: inkHistoryState() }); });
+      }
       break;
     case 'view':
       inkApplyView(views, m);

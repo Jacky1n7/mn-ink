@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.1 — 2026-10-13
+
+- **Double tap a card now really enters MarginNote's focus view** (selects the card, then runs MarginNote's own Focus command), with any tool: finger double tap, mouse double click, or two quick Pencil taps on the same spot — the taps no longer leave two dots behind (a single tap is still a dot).
+- **Dragging a snapped arc keeps its start fixed**: the arc keeps its shape and is scaled / turned about its start point, following the pen like a line's end; the end snaps to nodes and grid points.
+
 ## v0.4.0 — 2026-10-13
 
 Feature parity with MarginNote's built-in pen mode (checked item by item against MN 4.4.6):

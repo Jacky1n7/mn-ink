@@ -1019,7 +1019,7 @@ function startTool(e, edge) {
       lid: ++lidSeq, tool: st.tool, slot: src, isShapeTool: tool === 'shape', brush: st.brush, color: st.color, size: st.size, op: st.op,
       ps: prefs.pressureSens / 100, sim: e.pointerType !== 'pen' || st.tool === 'marker',
       dash: tool === 'shape' && prefs.shapeDash,
-      pts: [], shape: null, base: null, p0: null, still: [x, y],
+      pts: [], shape: null, base: null, p0: null, still: [x, y], t0: performance.now(),
       ruler: edge ? { side: edge.side } : null
     };
     pushPoint(x, y, pressureOf(e));
@@ -1095,7 +1095,7 @@ function moveTool(e) {
       // Hold, then drag: fine-tune the recognised shape.
       var p = [x, y];
       var k = active.base.kind;
-      if (k === 'line' || k === 'polyline' || k === 'arrow') p = snapOne(p);
+      if (k === 'line' || k === 'polyline' || k === 'arrow' || k === 'arc') p = snapOne(p);
       active.shape = inkAdjustShape(active.base, active.p0, p);
       return;
     }
@@ -1169,13 +1169,7 @@ function nearlyStraight(pts) {
   return L > 30 && inkDist(pts[0], pts[pts.length - 1]) / L > 0.965;
 }
 
-function commitStroke(s) {
-  s.done = true;
-  if (s.slot && s.slot.vanish) {
-    vanishing.push({ s: s, t: performance.now() });
-    kickAnim();
-    return;
-  }
+function strokeMsg(s) {
   var flat = [];
   if (s.shape) {
     s.shape.pts.forEach(function (p) { flat.push(round(p[0]), round(p[1]), 0.5); });
@@ -1183,11 +1177,49 @@ function commitStroke(s) {
     if (s.pts.length === 1) s.pts.push([s.pts[0][0] + 0.5, s.pts[0][1] + 0.5, s.pts[0][2]]);
     s.pts.forEach(function (p) { flat.push(round(p[0]), round(p[1]), Math.round(p[2] * 100) / 100); });
   }
-  pending.set(s.lid, s);
-  send({
+  return {
     t: 'stroke', lid: s.lid, tool: s.tool, b: s.brush, color: s.color, size: s.size, op: s.op,
     ps: s.shape ? null : s.ps, sim: s.sim, shape: !!s.shape, closed: !!(s.shape && s.shape.closed), dash: !!(s.shape && s.dash), pts: flat
-  });
+  };
+}
+
+// A dot (tap) is held back briefly: a second tap on the same spot makes it a
+// double tap (focus the card), otherwise it is committed as a normal dot.
+var heldTap = null; // { s, msg, x, y, timer, pen }
+var DBL_MS = 330;
+
+function flushHeldTap() {
+  if (!heldTap) return;
+  clearTimeout(heldTap.timer);
+  send(heldTap.msg);
+  heldTap = null;
+}
+
+function commitStroke(s, e) {
+  s.done = true;
+  if (s.slot && s.slot.vanish) {
+    vanishing.push({ s: s, t: performance.now() });
+    kickAnim();
+    return;
+  }
+  pending.set(s.lid, s);
+  var msg = strokeMsg(s);
+  var isTap = !s.shape && s.pts.length && inkPathLength(s.pts) < 4 && performance.now() - s.t0 < 260;
+  if (!isTap || !prefs.doubleTapFocus || surface !== 'map') {
+    send(msg);
+    return;
+  }
+  var x = s.pts[0][0], y = s.pts[0][1];
+  var pen = e && e.pointerType === 'pen';
+  if (heldTap && Math.hypot(heldTap.x - x, heldTap.y - y) < (pen || heldTap.pen ? 6 : 14)) {
+    clearTimeout(heldTap.timer);
+    var first = heldTap.msg;
+    heldTap = null;
+    send({ t: 'dblTap', x: x, y: y, dots: [first, msg] });
+    return;
+  }
+  flushHeldTap();
+  heldTap = { s: s, msg: msg, x: x, y: y, pen: pen, timer: setTimeout(flushHeldTap, DBL_MS) };
 }
 
 function endTool(e, cancelled) {
@@ -1210,7 +1242,7 @@ function endTool(e, cancelled) {
       else if (s.tool === 'pen' && prefs.autoRadical) s.shape = inkRecognizeRadical(s.pts, true);
     }
     if (s.shape && s.tool !== 'marker') s.shape = finalizeShape(s.shape);
-    commitStroke(s);
+    commitStroke(s, e);
   } else if (eraser) {
     flushEraser(true);
     eraser = null;

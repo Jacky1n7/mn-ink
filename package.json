@@ -1,6 +1,6 @@
 {
   "name": "mn-ink",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Notability / GoodNotes-style handwriting for MarginNote 4: pressure brushes, shape snapping, GoodNotes lasso, PDF pages, stored inside the notebook",
   "type": "module",

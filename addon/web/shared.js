@@ -446,16 +446,23 @@ function inkAdjustShape(base, p0, p) {
     return { kind: k, closed: false, pts: inkArrowPoints(a0p, [a0p[0] + len2 * Math.cos(ang2), a0p[1] + len2 * Math.sin(ang2)], head0) };
   }
   if (k === 'arc' && base.arc) {
-    // The arc's end follows the pen around the same circle.
+    // The start stays put; the end follows the pen. The arc keeps its shape
+    // and is scaled / turned about its start (like dragging a line's end).
     var A = base.arc;
-    var aEnd0 = A.a0 + A.sweep;
-    var aNow = Math.atan2(p[1] - A.cy, p[0] - A.cx);
-    var d = aNow - aEnd0;
-    while (d > Math.PI) d -= 2 * Math.PI;
-    while (d < -Math.PI) d += 2 * Math.PI;
-    var sw = A.sweep + d;
-    var rr = Math.max(4, Math.hypot(p[0] - A.cx, p[1] - A.cy));
-    return { kind: k, closed: false, pts: inkArcPoints(A.cx, A.cy, (A.r + rr) / 2, A.a0, sw, Math.max(12, Math.round((Math.abs(sw) / Math.PI) * 48))), arc: A };
+    var st = pts[0], e0 = pts[pts.length - 1];
+    var l0 = inkDist(st, e0);
+    if (l0 < 1) return base;
+    var sc = Math.max(0.05, inkDist(st, p) / l0);
+    var rot = Math.atan2(p[1] - st[1], p[0] - st[0]) - Math.atan2(e0[1] - st[1], e0[0] - st[0]);
+    var cr = Math.cos(rot), sr = Math.sin(rot);
+    var move = function (q) {
+      var dx = (q[0] - st[0]) * sc, dy = (q[1] - st[1]) * sc;
+      return [st[0] + dx * cr - dy * sr, st[1] + dx * sr + dy * cr];
+    };
+    var c = move([A.cx, A.cy]);
+    var arc = { cx: c[0], cy: c[1], r: A.r * sc, a0: A.a0 + rot, sweep: A.sweep };
+    var n = Math.max(12, Math.round((Math.abs(arc.sweep) / Math.PI) * 48));
+    return { kind: k, closed: false, pts: inkArcPoints(arc.cx, arc.cy, arc.r, arc.a0, arc.sweep, n), arc: arc };
   }
   if (k === 'radical') {
     var out = pts.map(function (q) { return [q[0], q[1]]; });
