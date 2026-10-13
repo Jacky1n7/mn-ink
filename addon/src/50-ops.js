@@ -669,6 +669,19 @@ function inkCardAt(views, x, y) {
   return best;
 }
 
+// Card frames on the mind map, in canvas coordinates ([x, y, w, h, …]): the
+// page only holds back a dot (possible double tap) when it lands on a card.
+function inkCardRects(views) {
+  if (!views || !views.active || views.active.kind !== 'map') return [];
+  var surf = inkSurf('map');
+  var out = [];
+  for (var id in (surf ? surf.place : {})) {
+    var f = surf.place[id];
+    out.push(inkRound(f.x), inkRound(f.y), inkRound(f.w), inkRound(f.h));
+  }
+  return out;
+}
+
 function inkBindSelectionAt(views, m) {
   var key = inkCardAt(views, m.x, m.y);
   if (!key) return '这里没有卡片';
@@ -695,8 +708,13 @@ function inkTapCard(views, m) {
     inkSafe(function () {
       var nc = sc.notebookController;
       var fn = nc ? nc.focusNote : null;
-      if ((!fn || String(fn.noteId) !== key) && ++tries < 6) {
-        NSTimer.scheduledTimerWithTimeInterval(0.15, false, go);
+      if (!fn || String(fn.noteId) !== key) {
+        if (++tries < 6) {
+          NSTimer.scheduledTimerWithTimeInterval(0.15, false, go);
+          return;
+        }
+        // The selection never landed: FocusNote would focus some other card.
+        inkCall('error', '没能进入聚焦：卡片没有被选中，请再双击一次');
         return;
       }
       inkApp().processCommandWithKeyFlagsInWindow('FocusNote', 0, INK_ADDONS[0].window);

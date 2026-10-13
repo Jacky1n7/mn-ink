@@ -42,6 +42,7 @@ function inkTick(addon) {
     }
   }
   if (INK_TICKS % 8 === 0) inkHookMNPens(addon, views);
+  if (INK_UI && INK_TICKS % 4 === 0) inkPushCards(views, false); // cards moved / branch folded
   if (INK_UI) inkGuardMNPen(addon);
 }
 

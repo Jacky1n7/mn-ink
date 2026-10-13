@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.2 — 2026-10-13
+
+- **Dots off the cards land at once**: only a tap on a card is held back (~0.3 s) to see whether it becomes a double tap; anywhere else a dot is drawn immediately. The add-on now tells the drawing page where the cards are.
+- If the card never gets selected, double tap now says so instead of silently doing nothing (and never focuses another card).
+- A held dot is always sent before the next stroke, so stroke order (and undo order) is kept.
+- Double tapping the card that is already focused leaves the focus view (MarginNote's Focus command toggles).
+
 ## v0.4.1 — 2026-10-13
 
 - **Double tap a card now really enters MarginNote's focus view** (selects the card, then runs MarginNote's own Focus command), with any tool: finger double tap, mouse double click, or two quick Pencil taps on the same spot — the taps no longer leave two dots behind (a single tap is still a dot).

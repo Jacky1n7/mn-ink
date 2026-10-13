@@ -231,6 +231,7 @@ var view = { ox: 0, oy: 0, z: 1, minZ: 0.0006, maxZ: 2 };
 var serverView = null;
 var hist = { canUndo: false, canRedo: false };
 var nodesCanvas = [];               // snap targets (surface units, flat)
+var cardsCanvas = null;             // mind map card frames [x, y, w, h, …]; null = unknown
 var surface = 'map', surfaces = { map: true, doc: false };
 var layersInfo = { active: 'default', layers: [{ id: 'default', name: '默认图层', hidden: false, n: 0 }] };
 var hasClip = false;
@@ -1195,6 +1196,18 @@ function flushHeldTap() {
   heldTap = null;
 }
 
+// Is a screen point on a mind map card? (unknown → assume yes)
+function onCard(x, y) {
+  if (!cardsCanvas) return true;
+  var m = 6 / view.z; // a little slack around the card's edge
+  var cx = (x + view.ox) / view.z, cy = (y + view.oy) / view.z;
+  for (var i = 0; i + 3 < cardsCanvas.length; i += 4) {
+    if (cx >= cardsCanvas[i] - m && cx <= cardsCanvas[i] + cardsCanvas[i + 2] + m &&
+        cy >= cardsCanvas[i + 1] - m && cy <= cardsCanvas[i + 1] + cardsCanvas[i + 3] + m) return true;
+  }
+  return false;
+}
+
 function commitStroke(s, e) {
   s.done = true;
   if (s.slot && s.slot.vanish) {
@@ -1205,11 +1218,13 @@ function commitStroke(s, e) {
   pending.set(s.lid, s);
   var msg = strokeMsg(s);
   var isTap = !s.shape && s.pts.length && inkPathLength(s.pts) < 4 && performance.now() - s.t0 < 260;
-  if (!isTap || !prefs.doubleTapFocus || surface !== 'map') {
+  var x = isTap ? s.pts[0][0] : 0, y = isTap ? s.pts[0][1] : 0;
+  // Only a dot on a card can start a double tap; elsewhere it lands at once.
+  if (!isTap || !prefs.doubleTapFocus || surface !== 'map' || !onCard(x, y)) {
+    flushHeldTap();
     send(msg);
     return;
   }
-  var x = s.pts[0][0], y = s.pts[0][1];
   var pen = e && e.pointerType === 'pen';
   if (heldTap && Math.hypot(heldTap.x - x, heldTap.y - y) < (pen || heldTap.pen ? 6 : 14)) {
     clearTimeout(heldTap.timer);
@@ -1911,7 +1926,7 @@ function buildSettingsPop() {
   n.appendChild(prefToggle('图形吸附到格点', '打开书写背景时生效', 'gridSnap'));
   n.appendChild(h4('脑图'));
   n.appendChild(prefToggle('笔迹绑定到选中的卡片', '有选中卡片时，新笔迹跟着它走（否则跟最近的卡片）', 'bindSelected'));
-  n.appendChild(prefToggle('双击卡片进入聚焦', '手指双击（或用手工具双击）', 'doubleTapFocus'));
+  n.appendChild(prefToggle('双击卡片进入聚焦', '卡片上的单点会稍等约 0.3 秒再落笔', 'doubleTapFocus'));
   n.appendChild(prefToggle('手势', '双指轻点撤销，三指轻点重做', 'gestures'));
   n.appendChild(h4('与 MarginNote 融合'));
   n.appendChild(prefToggle('接管 MN 自带的书写按钮', '点 MN 的笔也会打开 MN Ink；书写时自动关掉 MN 的笔', 'takeover'));
@@ -2078,6 +2093,7 @@ window.ink = {
     }
     hist = o.state || hist;
     nodesCanvas = o.nodes || [];
+    cardsCanvas = o.cards || null;
     surface = o.surface || 'map';
     surfaces = o.surfaces || surfaces;
     hasClip = !!o.clip;
@@ -2095,6 +2111,9 @@ window.ink = {
   },
   nodes: function (n) {
     nodesCanvas = n || [];
+  },
+  cards: function (c) {
+    cardsCanvas = c || null;
   },
   layers: function (l) {
     if (!l) return;

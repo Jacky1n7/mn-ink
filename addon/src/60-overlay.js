@@ -137,8 +137,21 @@ function inkOnPageUrl(url) {
 
 function inkPushState(views, opts) {
   inkCall('state', inkHistoryState());
-  if (opts && opts.nodes) inkCall('nodes', inkSnapNodes(views));
+  if (opts && opts.nodes) {
+    inkCall('nodes', inkSnapNodes(views));
+    inkPushCards(views, true);
+  }
   if (opts && opts.sel) inkCall('selection', INK_SEL ? inkSelectionInfo(views) : null);
+}
+
+// Card frames for the page (double-tap detection); only sent when they change.
+var INK_CARDS_SIG = null;
+function inkPushCards(views, force) {
+  var rects = inkCardRects(views);
+  var sig = rects.join(',');
+  if (!force && sig === INK_CARDS_SIG) return;
+  INK_CARDS_SIG = sig;
+  inkCall('cards', rects);
 }
 
 function inkViewInfo(views) {
@@ -154,13 +167,17 @@ function inkViewInfo(views) {
 
 function inkHandleMsg(views, m) {
   switch (m.t) {
-    case 'ready':
+    case 'ready': {
+      var cards = inkCardRects(views);
+      INK_CARDS_SIG = cards.join(',');
       inkCall('init', {
         prefs: inkLoadPrefs(), view: inkViewInfo(views), state: inkHistoryState(), nodes: inkSnapNodes(views),
         surface: INK_UI.surface, surfaces: { map: !!views.map, doc: !!views.doc }, clip: !!(INK_CLIP && INK_CLIP.length),
-        storage: INK_STORE && INK_STORE.file ? 'file' : 'notebook', version: INK_VERSION, layers: inkLayersInfo()
+        storage: INK_STORE && INK_STORE.file ? 'file' : 'notebook', version: INK_VERSION, layers: inkLayersInfo(),
+        cards: cards
       });
       break;
+    }
     case 'pick':
       inkCall('picked', inkPick(views, m));
       break;

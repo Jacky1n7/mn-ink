@@ -157,6 +157,16 @@ const harness = `<script>
   later(60, function () { setTool('pen1'); out.sentBeforeTaps = __sent.length; stroke([[600, 600], [600.5, 600.5]], 'mouse'); stroke([[601, 600], [601.3, 600.2]], 'mouse'); });
   later(60, function () { var m = __sent.slice(out.sentBeforeTaps); out.dblTap = m.map(function (x) { return x.t; }).join(','); stroke([[700, 600], [700.5, 600.5]], 'mouse'); });
   later(450, function () { var m = __sent.slice(out.sentBeforeTaps); out.afterSingle = m.map(function (x) { return x.t; }).join(','); });
+  // 13c. with card frames known: a dot off the cards lands at once, a dot on a card waits
+  later(60, function () {
+    var c = function (x, y) { return [(x + view.ox) / view.z, (y + view.oy) / view.z]; };
+    var a = c(560, 560), b = c(640, 640);
+    ink.cards([a[0], a[1], b[0] - a[0], b[1] - a[1]]);
+    out.sentBeforeOff = __sent.length; stroke([[300, 650], [300.5, 650.5]], 'mouse');
+  });
+  later(30, function () { out.offCardDot = __sent.slice(out.sentBeforeOff).map(function (x) { return x.t; }).join(','); out.sentBeforeOn = __sent.length; stroke([[600, 600], [600.5, 600.5]], 'mouse'); });
+  later(30, function () { out.onCardHeld = __sent.slice(out.sentBeforeOn).map(function (x) { return x.t; }).join(','); });
+  later(450, function () { out.onCardLater = __sent.slice(out.sentBeforeOn).map(function (x) { return x.t; }).join(','); });
   // 14. every popover opens; palette hex input; size slider
   later(60, function () {
     ['shape', 'eraser', 'lasso'].forEach(function (k) { setTool(k); tapEl(toolBtn(k)); out['pop_' + k] = !!document.querySelector('.pop'); closePopover(); });
