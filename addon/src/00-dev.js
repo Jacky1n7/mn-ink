@@ -1,8 +1,9 @@
 // ---------------------------------------------------------------------------
 // Development hot-reload channel. Only present in `npm run build -- --dev`.
 //
-//   scripts/dev.mjs puts "mnink-dev:<id>:<js>" on the clipboard and opens
-//   marginnote4app://addon/mninkdev?id=<id>&key=<dev key>
+//   scripts/dev.mjs opens marginnote4app://addon/mninkdev?id=<id>&key=<dev key>&c=<js>
+//   (a hot-reload push is too big for a URL: it puts "mnink-dev:<id>:<js>" on
+//   the clipboard instead and leaves out c=)
 //   The add-on evaluates the JS in global scope and answers through the
 //   MN Agent Bridge receiver (mnagentbridge://result?id=…), so module code
 //   can be replaced without reinstalling MarginNote's add-on.
@@ -36,15 +37,20 @@ function inkDevHandle(message) {
     if (i > 0) q[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1));
   });
   if (q.key !== INK_DEV_KEY || !/^[A-Za-z0-9_-]{1,80}$/.test(q.id || '')) return true;
-  var clip = String(UIPasteboard.generalPasteboard().string || '');
-  var prefix = 'mnink-dev:' + q.id + ':';
-  if (clip.indexOf(prefix) !== 0) {
-    inkDevReply(q.id, { ok: false, error: 'clipboard payload missing' });
-    return true;
+  // Small snippets travel in the URL (c=…); only big pushes use the clipboard.
+  var code = q.c;
+  if (code === undefined) {
+    var clip = String(UIPasteboard.generalPasteboard().string || '');
+    var prefix = 'mnink-dev:' + q.id + ':';
+    if (clip.indexOf(prefix) !== 0) {
+      inkDevReply(q.id, { ok: false, error: 'clipboard payload missing' });
+      return true;
+    }
+    code = clip.slice(prefix.length);
   }
   var out;
   try {
-    out = { ok: true, value: (0, eval)(clip.slice(prefix.length)) };
+    out = { ok: true, value: (0, eval)(code) };
   } catch (e) {
     out = { ok: false, error: String(e), stack: e && e.stack ? String(e.stack) : null };
   }

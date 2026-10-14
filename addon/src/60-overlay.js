@@ -31,6 +31,15 @@ function inkPickSurface(views, wanted) {
 function inkOpenOverlay(addon, wanted) {
   if (INK_UI) inkCloseOverlay();
   var views = inkSync(addon);
+  if (views && INK_MN_NATIVE) {
+    // Back from MarginNote's own pen: leave its mode, take the buttons over again.
+    INK_MN_NATIVE = null;
+    ['map', 'doc'].forEach(function (k) {
+      var t = INK_MN[k];
+      if (t && t.pen.window && t.pen.selected && t.hand && t.hand.window) t.hand.sendActionsForControlEvents(1 << 6);
+    });
+    inkHookMNPens(addon, views);
+  }
   if (!views) {
     inkHud(addon, 'MN Ink：请先打开脑图或文档 · open a mind map or a PDF first');
     return;
@@ -48,6 +57,7 @@ function inkOpenOverlay(addon, wanted) {
   web.loadHTMLStringBaseURL(INK_PAGE_HTML, null);
   inkGuardMNPen(addon);
   inkRefreshButton(addon);
+  inkMarkMNPens();
 }
 
 // MarginNote's UIWebView is a wrapper (MNUWebView) around a WKWebView; every
@@ -83,6 +93,7 @@ function inkCloseOverlay() {
   } catch (e) {}
   inkCommit();
   inkRefreshButton(ui.addon);
+  inkMarkMNPens();
 }
 
 function inkRefreshButton(addon) {
@@ -235,6 +246,24 @@ function inkHandleMsg(views, m) {
       inkCall('committed', { lid: m.lid, ok: !!s, state: inkHistoryState() });
       if (s && s.shape) inkCall('nodes', inkSnapNodes(views));
       if (!s) inkCall('error', '这里不在任何页面上');
+      break;
+    }
+    case 'mnPen':
+      inkUseMNPen(INK_UI.addon);
+      return;
+    case 'scribble': {
+      // A scribble over pen strokes erases them; otherwise it is plain ink.
+      var gone = inkScribbleTargets(views, m);
+      if (gone.length) {
+        inkApply({ add: [], remove: gone });
+        inkCommit('涂抹擦除');
+        inkCall('committed', { lid: m.stroke.lid, ok: false, erased: gone.length, state: inkHistoryState() });
+        inkPushState(views, { nodes: true });
+        break;
+      }
+      var s3 = inkCommitStroke(views, m.stroke);
+      inkCall('committed', { lid: m.stroke.lid, ok: !!s3, state: inkHistoryState() });
+      if (!s3) inkCall('error', '这里不在任何页面上');
       break;
     }
     case 'erase':

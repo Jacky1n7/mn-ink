@@ -252,6 +252,45 @@ function inkErase(views, m) {
   if (removed.length) inkApply({ add: added, remove: removed });
 }
 
+// Scribble to erase (as in GoodNotes): pen strokes under a dense zig-zag
+// disappear together with it. m.stroke is the scribble's stroke message
+// (screen points as x, y, pressure triples). Returns the strokes to erase;
+// none means the scribble was real writing and is kept as ink.
+function inkScribbleTargets(views, m) {
+  var ctx = views.active;
+  var v = inkView(views);
+  var flat = m.stroke.pts || [];
+  var e = [];
+  for (var i = 0; i + 2 < flat.length; i += 3) e.push(inkToCanvas(v, flat[i], flat[i + 1]));
+  if (e.length < 8) return [];
+  var eb = inkBBox(e);
+  var area = Math.max(1, (eb.x1 - eb.x0) * (eb.y1 - eb.y0));
+  var pad = 4 / v.z;
+  var penHalf = (m.stroke.size || 2) / 2 / v.z;
+  var inBox = function (p) { return p[0] >= eb.x0 - pad && p[0] <= eb.x1 + pad && p[1] >= eb.y0 - pad && p[1] <= eb.y1 + pad; };
+  var hits = [], ub = null;
+  INK_STORE.strokes.forEach(function (s) {
+    if (s.tool === 'marker' || !inkEditable(s, ctx)) return; // pen strokes only, like GoodNotes
+    var o = inkOrigin(s);
+    if (!o) return;
+    var b = inkAbsBox(s, o);
+    if (b.x1 < eb.x0 - pad || b.x0 > eb.x1 + pad || b.y1 < eb.y0 - pad || b.y0 > eb.y1 + pad) return;
+    var pts = inkAbsPoints(s, o);
+    var inside = pts.filter(inBox).length;
+    // Mostly under the scribble, and either crossed by it or wholly inside
+    // its area (a dot it skipped over). A long line it only grazes stays.
+    if (inside < 0.6 * pts.length) return;
+    if (inside < pts.length && !inkTouches(pts, e, penHalf + inkAbsWidth(s, o) / 2 + 1 / v.z)) return;
+    hits.push(s);
+    ub = ub ? { x0: Math.min(ub.x0, b.x0), y0: Math.min(ub.y0, b.y0), x1: Math.max(ub.x1, b.x1), y1: Math.max(ub.y1, b.y1) } : b;
+  });
+  if (!hits.length) return [];
+  // The scribble must lie over the ink, not just brush past a stray mark.
+  var ox = Math.min(eb.x1, ub.x1) - Math.max(eb.x0, ub.x0), oy = Math.min(eb.y1, ub.y1) - Math.max(eb.y0, ub.y0);
+  if (ox <= 0 || oy <= 0 || (ox * oy) / area < 0.25) return [];
+  return hits;
+}
+
 function inkPointInPoly(p, poly) {
   var inside = false;
   for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {

@@ -157,3 +157,55 @@ test('dragging an arc keeps its start fixed and scales / turns it about the star
   const r2 = inkAdjustShape(base, e0, [st[0], st[1] - inkDist(st, e0)]);
   assert.ok(Math.hypot(r2.pts[0][0] - st[0], r2.pts[0][1] - st[1]) < 1e-6);
 });
+test('both ends of an arc snap to nearby nodes, keeping the arc shape', () => {
+  const arc = [];
+  for (let i = 0; i <= 40; i++) { const a = Math.PI + (i / 40) * (Math.PI / 2); arc.push([200 + 100 * Math.cos(a), 200 + 100 * Math.sin(a)]); }
+  const base = inkRecognizeShape(arc);
+  const st = base.pts[0], en = base.pts[base.pts.length - 1];
+  const n1 = [st[0] + 4, st[1] - 3], n2 = [en[0] - 5, en[1] + 2];
+  const r = inkSnapShape(base, [n1, n2], null, 10);
+  assert.deepEqual([...r.pts[0]], n1);
+  assert.deepEqual([...r.pts[r.pts.length - 1]], n2);
+  assert.ok(Math.abs(r.arc.sweep - base.arc.sweep) < 1e-9, 'same sweep');
+});
+test('an arc whose chord is almost level gets an exactly level chord', () => {
+  const arc = [];
+  for (let i = 0; i <= 50; i++) { const a = Math.PI + (i / 50) * Math.PI + 0.05; arc.push([200 + 80 * Math.cos(a), 200 + 80 * Math.sin(a)]); }
+  const base = inkRecognizeShape(arc);
+  assert.equal(base?.kind, 'arc');
+  const r = inkSnapShape(base, [], null, 10);
+  const s = r.pts[0], e = r.pts[r.pts.length - 1];
+  assert.ok(Math.abs(s[1] - e[1]) < 1e-6, 'level chord');
+  assert.deepEqual([...s], [...base.pts[0]], 'start kept');
+});
+
+// ---- scribble to erase -------------------------------------------------------
+const { inkIsScribble } = ctx;
+const zig = (pts) => pts.slice(1).reduce((acc, p, i) => acc.concat(along(pts[i], p, 12)), []);
+test('GoodNotes-style scribbles are recognised', () => {
+  // zig-zag across a word (left → right, up and down)
+  const z = []; for (let i = 0; i <= 8; i++) z.push([100 + i * 25, i % 2 ? 140 : 100]);
+  assert.ok(inkIsScribble(wobble(zig(z), 2)), 'zig-zag');
+  // horizontal back and forth, stacked
+  const h = []; for (let i = 0; i <= 6; i++) h.push([i % 2 ? 300 : 100, 100 + i * 6]);
+  assert.ok(inkIsScribble(wobble(zig(h), 2)), 'back and forth');
+  // a row of loops ("eeee")
+  const loops = []; for (let i = 0; i <= 200; i++) { const t = (i / 200) * Math.PI * 2 * 6; loops.push([100 + i * 1.2 + 18 * Math.cos(t), 120 + 18 * Math.sin(t)]); }
+  assert.ok(inkIsScribble(wobble(loops, 1)), 'loops');
+});
+test('ordinary strokes are not scribbles', () => {
+  for (const pts of userRadicals) assert.equal(inkIsScribble(pts.map(([x, y]) => [x, y, 0.5])), false, '√');
+  assert.equal(inkIsScribble(wobble(along([0, 0], [300, 10], 40), 2)), false, 'line');
+  assert.equal(inkIsScribble(wobble(ellipse(200, 200, 80, 78), 3)), false, 'circle');
+  const z = [[100, 100], [160, 100], [100, 160], [160, 160]];
+  assert.equal(inkIsScribble(wobble(zig(z), 1)), false, '"Z"');
+});
+test('"m", "8" and "w" are not scribbles', () => {
+  const m = [[100, 160], [100, 100], [130, 160], [130, 100], [160, 160]];
+  assert.equal(inkIsScribble(wobble(zig(m), 1)), false, 'm');
+  const w = [[100, 100], [115, 160], [130, 100], [145, 160], [160, 100]];
+  assert.equal(inkIsScribble(wobble(zig(w), 1)), false, 'w');
+  const eight = [];
+  for (let i = 0; i <= 120; i++) { const t = (i / 120) * Math.PI * 2; eight.push([200 + 25 * Math.sin(2 * t) / 2 * 2, 200 + 50 * Math.sin(t)]); }
+  assert.equal(inkIsScribble(wobble(eight, 1)), false, '8');
+});

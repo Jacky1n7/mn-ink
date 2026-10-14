@@ -23,11 +23,11 @@ Ink is vector, drawn straight into MarginNote's own mind map canvas and PDF cont
 | --- | --- |
 | ✒️ **Brushes** | fountain pen (pressure), ballpoint, brush (tapered), pencil; **pressure sensitivity 0–100 %**; each size preset adjustable **10 %–400 %** |
 | 🖍 **Highlighter** | translucent, always below the ink; optional auto-straighten, or hold to straighten |
-| 📐 **Shapes** | hold still after a stroke → line, arrow, **arc**, circle, ellipse, rectangle, triangle, polygon, polyline; **keep dragging to adjust** (length, angle, size, sweep); shape tool recognises every stroke, dashed guide lines |
+| 📐 **Shapes** | hold still after a stroke → line, arrow, **arc** (ends snap, chord straightened), circle, ellipse, rectangle, triangle, polygon, polyline; **keep dragging to adjust** (length, angle, size, sweep); shape tool recognises every stroke, dashed guide lines |
 | √ **Square roots** | a written √ turns into a clean radical (tuned on real handwriting); drag to extend the bar |
 | 🧲 **Snapping** | ends and corners snap to other shapes' nodes and to the grid; 15° angle steps, near-horizontal / vertical lines straighten |
 | ⭕ **Lasso (GoodNotes style)** | **anything the lasso touches is selected**; freehand or rectangle; filter by handwriting / highlighter / shapes; move, resize, **rotate**, recolour, copy, cut, paste, duplicate, delete; drag a single shape's **nodes** |
-| 🩹 **Eraser** | whole-stroke or partial (cuts strokes); highlighter-only; auto-switch back |
+| 🩹 **Eraser** | whole-stroke or partial (cuts strokes); highlighter-only; auto-switch back; **scribble to erase** (as in GoodNotes: scribble over writing to erase it) |
 | 🎨 **Colours** | favourites + recent + 28-colour palette + **hex input** + system picker |
 | 🔴 **Laser pointer** | glowing trail for presenting; fades away, never saved |
 | 🗒 **Writing paper** | squares / dots / lines in three sizes, shown only while writing |
@@ -35,7 +35,8 @@ Ink is vector, drawn straight into MarginNote's own mind map canvas and PDF cont
 
 ## 🔗 Deep MarginNote integration
 
-- **Takes over MarginNote's pen buttons** (mind map toolbar, PDF tool picker): tapping them opens MN Ink, and MarginNote's own pen is switched off while you write. Can be turned off.
+- **Takes over MarginNote's pen buttons** (mind map toolbar, PDF tool picker): they become an on/off switch for MN Ink and no longer enter MarginNote's handwriting mode (no zoom jump, no MarginNote paper background). Can be turned off. To edit handwriting made with MarginNote's own pen: Settings → 暂时用 MN 自带笔.
+- **Palm rejection**: a hand resting on the iPad neither pans the view nor triggers the two-finger-tap undo.
 - **Stored in the notebook**: each notebook gets one hidden "ink storage" note (hidden like MarginNote's own AI chats and sketch layers), one record per card / PDF page. Therefore
   - MarginNote **backups, iCloud sync and .marginpkg exports include the ink**;
   - **every stroke is one step of MarginNote's undo history**: the toolbar's undo *is* MarginNote's undo, and undoing from the menu or ⌘Z updates the ink immediately.
@@ -49,7 +50,8 @@ Ink is vector, drawn straight into MarginNote's own mind map canvas and PDF cont
 
 ## ⚠️ Known limits
 
-- **Not yet tested on iPad + Apple Pencil** (developed on a Mac) — feedback on the pressure feel is welcome.
+- **Apple Pencil double tap cannot switch to the eraser**: MarginNote does not expose Pencil double tap (UIPencilInteraction) to add-ons. Scribble to erase instead.
+- Handwriting made with MarginNote's own pen is PencilKit ink that add-ons cannot read; MN Ink's eraser and lasso do not touch it.
 - The storage note shows up in MarginNote's **AI chat history** as "✒️ MN Ink 手写笔迹存储（请勿删除）". If deleted, ⌘Z restores it and the add-on rebuilds it from memory.
 - A notebook with no hidden note at all (never used AI chat or handwriting) keeps ink in a local file first and moves it into the notebook later.
 - PDFs: vertical scroll mode only; zoom PDFs with MarginNote's own gestures.

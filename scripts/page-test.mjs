@@ -137,8 +137,8 @@ const harness = `<script>
   later(60, function () { send({ t: 'layer', op: 'add' }); });
   later(60, function () { out.layers = layersInfo.layers.length + ':' + layersInfo.active; send({ t: 'cardDrawing' }); });
   later(120, function () { var m = __sent.filter(function (x) { return x.t === 'createCard'; }).pop(); out.cardPng = m ? m.png.length : 0; });
-  // 12. finger pan, two-finger tap = undo
-  later(60, function () {
+  // 12. finger pan, two-finger tap = undo (away from pen activity)
+  later(900, function () {
     setTool(prefs.slots[0].id);
     ev('pointerdown', 500, 500, 'touch'); ev('pointermove', 520, 530, 'touch'); ev('pointerup', 520, 530, 'touch');
     out.viewAfterPan = [Math.round(view.ox), Math.round(view.oy), view.z];
@@ -151,6 +151,20 @@ const harness = `<script>
     out.twoFingerUndoBefore = before;
   });
   later(60, function () { out.twoFingerUndo = __sent.filter(function (x) { return x.t === 'undo'; }).length - out.twoFingerUndoBefore; });
+  // 12b. palm rejection: cancelled touches, touches right after the pen
+  later(900, function () {
+    function t(type, id, x, y) { cv.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true })); }
+    out.palmUndoBefore = __sent.filter(function (x) { return x.t === 'undo'; }).length;
+    t('pointerdown', 31, 300, 300); t('pointerdown', 32, 340, 300); t('pointercancel', 31, 300, 300); t('pointercancel', 32, 340, 300);
+    stroke([[200, 200], [240, 210], [280, 220]], 'pen');
+    t('pointerdown', 33, 300, 300); t('pointerdown', 34, 340, 300); t('pointerup', 33, 300, 300); t('pointerup', 34, 340, 300);
+    out.viewBeforePalm = __sent.filter(function (x) { return x.t === 'view'; }).length;
+    t('pointerdown', 35, 400, 400); t('pointermove', 35, 430, 440); t('pointermove', 35, 470, 480); t('pointerup', 35, 470, 480);
+  });
+  later(60, function () {
+    out.palmUndo = __sent.filter(function (x) { return x.t === 'undo'; }).length - out.palmUndoBefore;
+    out.palmPan = __sent.filter(function (x) { return x.t === 'view'; }).length - out.viewBeforePalm;
+  });
   // 13. hand tool pans with the mouse
   later(60, function () { setTool('hand'); var v0 = view.ox; stroke([[300, 300], [340, 300], [380, 300]], 'mouse'); out.handPanned = Math.round(v0 - view.ox); });
   // 13b. two mouse taps on one spot = double tap (no dots); a single tap = a dot

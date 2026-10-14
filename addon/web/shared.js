@@ -409,7 +409,8 @@ function inkSnapPoint(p, nodes, grid, radius) {
 
 // Snap the corner points of a straight-edged shape; curves keep their form.
 function inkSnapShape(shape, nodes, grid, radius) {
-  if (!shape || shape.kind === 'circle' || shape.kind === 'ellipse' || shape.kind === 'arc') return shape;
+  if (!shape || shape.kind === 'circle' || shape.kind === 'ellipse') return shape;
+  if (shape.kind === 'arc') return shape.arc ? inkSnapArc(shape, nodes, grid, radius) : shape;
   if (shape.kind === 'arrow') {
     var tail = inkSnapPoint(shape.pts[0], nodes, grid, radius);
     var tip = inkSnapPoint(shape.pts[1], nodes, grid, radius);
@@ -448,21 +449,7 @@ function inkAdjustShape(base, p0, p) {
   if (k === 'arc' && base.arc) {
     // The start stays put; the end follows the pen. The arc keeps its shape
     // and is scaled / turned about its start (like dragging a line's end).
-    var A = base.arc;
-    var st = pts[0], e0 = pts[pts.length - 1];
-    var l0 = inkDist(st, e0);
-    if (l0 < 1) return base;
-    var sc = Math.max(0.05, inkDist(st, p) / l0);
-    var rot = Math.atan2(p[1] - st[1], p[0] - st[0]) - Math.atan2(e0[1] - st[1], e0[0] - st[0]);
-    var cr = Math.cos(rot), sr = Math.sin(rot);
-    var move = function (q) {
-      var dx = (q[0] - st[0]) * sc, dy = (q[1] - st[1]) * sc;
-      return [st[0] + dx * cr - dy * sr, st[1] + dx * sr + dy * cr];
-    };
-    var c = move([A.cx, A.cy]);
-    var arc = { cx: c[0], cy: c[1], r: A.r * sc, a0: A.a0 + rot, sweep: A.sweep };
-    var n = Math.max(12, Math.round((Math.abs(arc.sweep) / Math.PI) * 48));
-    return { kind: k, closed: false, pts: inkArcPoints(arc.cx, arc.cy, arc.r, arc.a0, arc.sweep, n), arc: arc };
+    return inkArcBetween(base, pts[0], p) || base;
   }
   if (k === 'radical') {
     var out = pts.map(function (q) { return [q[0], q[1]]; });
@@ -521,6 +508,85 @@ function inkFitCircle(pts) {
   var err = 0;
   for (i = 0; i < n; i++) err += Math.abs(Math.hypot(pts[i][0] - cx, pts[i][1] - cy) - r);
   return { cx: cx, cy: cy, r: r, err: err / n / r };
+}
+
+// ---------------------------------------------------------------------------
+// Scribble to erase (GoodNotes): a dense back-and-forth stroke — a zig-zag
+// across the writing, an up-and-down "W" run, or a row of loops. Whether it
+// actually erases is decided against the ink under it (add-on side).
+// ---------------------------------------------------------------------------
+
+// Direction changes along one axis, ignoring wiggles smaller than hyst.
+function inkReversals(pts, axis, hyst) {
+  var dir = 0, hi = pts[0][axis], lo = hi, n = 0;
+  for (var i = 1; i < pts.length; i++) {
+    var v = pts[i][axis];
+    if (dir === 0) {
+      if (v - lo > hyst) { dir = 1; hi = v; }
+      else if (hi - v > hyst) { dir = -1; lo = v; }
+      else { hi = Math.max(hi, v); lo = Math.min(lo, v); }
+    } else if (dir === 1) {
+      if (v > hi) hi = v;
+      else if (hi - v > hyst) { dir = -1; lo = v; n++; }
+    } else {
+      if (v < lo) lo = v;
+      else if (v - lo > hyst) { dir = 1; hi = v; n++; }
+    }
+  }
+  return n;
+}
+
+function inkIsScribble(pts) {
+  if (!pts || pts.length < 12) return false;
+  var bb = inkBBox(pts);
+  var w = bb.x1 - bb.x0, h = bb.y1 - bb.y0;
+  var L = inkPathLength(pts);
+  if (L < 100 || L < 1.8 * Math.max(w, h)) return false; // the pen keeps doubling back
+  var ring = inkResample(pts, 200);
+  var rx = inkReversals(ring, 0, Math.max(5, 0.3 * w));
+  var ry = inkReversals(ring, 1, Math.max(5, 0.3 * h));
+  // ≥ 6 legs one way ("m", "8", "w" have 3–5), or loops both ways
+  return Math.max(rx, ry) >= 5 || (rx >= 3 && ry >= 3);
+}
+
+/**
+ * The same arc (same sweep, same bulge) moved so that it runs from s to e:
+ * a similarity transform taking the old ends onto the new ones.
+ */
+function inkArcBetween(shape, s, e) {
+  var A = shape.arc;
+  if (!A) return null;
+  var st = shape.pts[0], e0 = shape.pts[shape.pts.length - 1];
+  var l0 = inkDist(st, e0);
+  if (l0 < 1) return null;
+  var sc = Math.max(0.05, inkDist(s, e) / l0);
+  var rot = Math.atan2(e[1] - s[1], e[0] - s[0]) - Math.atan2(e0[1] - st[1], e0[0] - st[0]);
+  var cr = Math.cos(rot), sr = Math.sin(rot);
+  var dx = (A.cx - st[0]) * sc, dy = (A.cy - st[1]) * sc;
+  var arc = { cx: s[0] + dx * cr - dy * sr, cy: s[1] + dx * sr + dy * cr, r: A.r * sc, a0: A.a0 + rot, sweep: A.sweep };
+  var n = Math.max(12, Math.round((Math.abs(arc.sweep) / Math.PI) * 48));
+  var pts = inkArcPoints(arc.cx, arc.cy, arc.r, arc.a0, arc.sweep, n);
+  pts[0] = [s[0], s[1]];
+  pts[pts.length - 1] = [e[0], e[1]];
+  return { kind: 'arc', closed: false, pts: pts, arc: arc };
+}
+
+// Arc ends: each end snaps to nodes / grid; a chord that is almost level or
+// upright is made exactly so (like straight lines).
+function inkSnapArc(shape, nodes, grid, radius) {
+  var s = shape.pts[0], e = shape.pts[shape.pts.length - 1];
+  var hs = inkSnapPoint(s, nodes, grid, radius), he = inkSnapPoint(e, nodes, grid, radius);
+  var s2 = hs ? hs.p : [s[0], s[1]], e2 = he ? he.p : [e[0], e[1]];
+  if (!hs || !he) {
+    var ang = Math.atan2(e2[1] - s2[1], e2[0] - s2[0]);
+    var a2 = inkSnapAngle(ang, Math.PI / 2, (5 * Math.PI) / 180);
+    if (a2 !== ang) {
+      var len = inkDist(s2, e2);
+      if (he && !hs) s2 = [e2[0] - len * Math.cos(a2), e2[1] - len * Math.sin(a2)];
+      else e2 = [s2[0] + len * Math.cos(a2), s2[1] + len * Math.sin(a2)];
+    }
+  }
+  return inkArcBetween(shape, s2, e2) || shape;
 }
 
 function inkArcPoints(cx, cy, r, a0, sweep, n) {

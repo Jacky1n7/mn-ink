@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.0 — 2026-10-14
+
+- **Scribble to erase** (as in GoodNotes): scribble over pen strokes — a zig-zag across the words, an up-and-down run or a row of loops — and they go away together with the scribble (one undo step). Only pen strokes on the active layer, mostly under the scribble, are erased; highlighter stays. A scribble over nothing is kept as ink. Switch: Settings → 涂抹擦除.
+- **Palm rejection on iPad**: a hand resting on the screen no longer pans / zooms the view or triggers the two-finger-tap undo. Touches the system cancels never count as taps, touches during and right after Pencil strokes are ignored, very large contacts are ignored, and the two-/three-finger taps must be deliberate.
+- **Arc ends snap**: both ends of a recognised arc snap to nearby nodes / grid points (the arc keeps its shape), and a nearly level or upright chord is made exact.
+- **MarginNote's pen button is now an MN Ink on/off switch** (takeover on): MarginNote's own action is taken off the button, so tapping it no longer enters MarginNote's handwriting mode (no zoom jump, no MarginNote paper background, no tool picker); the button lights up while MN Ink is open. Switching the takeover off gives the button back.
+- **Settings → 暂时用 MN 自带笔**: to edit handwriting written with MarginNote's own pen; the takeover comes back when MarginNote's handwriting mode is left.
+- Dev channel: snippets travel in the URL instead of the clipboard (it no longer shows up on other devices through Universal Clipboard).
+
 ## v0.4.2 — 2026-10-13
 
 - **Dots off the cards land at once**: only a tap on a card is held back (~0.3 s) to see whether it becomes a double tap; anywhere else a dot is drawn immediately. The add-on now tells the drawing page where the cards are.

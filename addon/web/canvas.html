@@ -215,7 +215,7 @@ var DEFAULT_PREFS = {
   autoRadical: true, snapNodes: true,
   grid: 'none', gridSize: 1, gridSnap: true,
   ruler: false, rulerState: null,
-  bindSelected: false, doubleTapFocus: true, gestures: true,
+  bindSelected: false, doubleTapFocus: true, gestures: true, scribbleErase: true,
   takeover: true, surface: 'map',
   barTop: false
 };
@@ -224,6 +224,8 @@ var HOLD_MS = 450;                  // pen held still this long → snap to a sh
 var SNAP_PX = 11;
 var LASER_MS = 900;
 var VANISH_HOLD = 1300, VANISH_FADE = 900;
+function vanishHold(v) { return v.hold === undefined ? VANISH_HOLD : v.hold; }
+function vanishFade(v) { return v.fade === undefined ? VANISH_FADE : v.fade; }
 var FIXED_TOOLS = ['shape', 'eraser', 'lasso', 'laser', 'hand'];
 
 var prefs = JSON.parse(JSON.stringify(DEFAULT_PREFS));
@@ -536,7 +538,7 @@ function drawLaser() {
 function animLoop() {
   var now = performance.now();
   laser = laser.filter(function (p) { return now - p.t < LASER_MS; });
-  vanishing = vanishing.filter(function (v) { return now - v.t < VANISH_HOLD + VANISH_FADE; });
+  vanishing = vanishing.filter(function (v) { return now - v.t < vanishHold(v) + vanishFade(v); });
   draw();
   var busy = laser.length || vanishing.length || (penId !== null && prefs.tool === 'laser');
   animRaf = busy ? requestAnimationFrame(animLoop) : 0;
@@ -630,7 +632,7 @@ function draw() {
   var now = performance.now();
   vanishing.forEach(function (v) {
     var age = now - v.t;
-    paintStroke(g, v.s, age < VANISH_HOLD ? 1 : Math.max(0, 1 - (age - VANISH_HOLD) / VANISH_FADE));
+    paintStroke(g, v.s, age < vanishHold(v) ? 1 : Math.max(0, 1 - (age - vanishHold(v)) / vanishFade(v)));
   });
   if (active) paintStroke(g, active);
   if (lasso && lasso.pts.length > 1) {
@@ -763,6 +765,25 @@ var gest = null;             // { n, cx, cy, d, a }
 var tapInfo = null;          // finger tap tracking for gestures / double tap
 var lastTap = null;          // { t, x, y }
 var penId = null;            // pointer drawing right now
+// Palm rejection: a hand resting on the screen must neither pan / zoom the
+// view nor count as a two-finger tap (undo). Touches near pen activity, very
+// large contacts and contacts the system cancels are treated as palm.
+var penAt = -1e9;            // last pen event (down / move / up / hover)
+var palms = new Set();       // touch pointers ignored until lifted
+var PALM_MS = 600;           // touches starting this soon after the pen = palm
+var PALM_SIZE = 60;          // contact width / height (CSS px) of a palm
+
+function isPalm(e) {
+  return performance.now() - penAt < PALM_MS || (e.width || 0) > PALM_SIZE || (e.height || 0) > PALM_SIZE;
+}
+
+// The pen came down: every finger on the screen now is a palm.
+function rejectTouches() {
+  touches.forEach(function (_, id) { palms.add(id); });
+  touches.clear();
+  gest = null;
+  tapInfo = null;
+}
 var holdTimer = 0;
 
 function pressureOf(e) {
@@ -821,11 +842,13 @@ cv.addEventListener('pointerdown', function (e) {
   }
   var x = e.clientX, y = e.clientY;
   if (e.pointerType === 'touch') {
-    if (penId !== null) return; // palm while writing
+    if (penId !== null || isPalm(e)) { palms.add(e.pointerId); return; } // palm while / right after writing
     touches.set(e.pointerId, [x, y]);
     cv.setPointerCapture(e.pointerId);
-    if (!tapInfo) tapInfo = { t: performance.now(), max: 0, moved: false, x: x, y: y };
+    var tnow = performance.now();
+    if (!tapInfo) tapInfo = { t: tnow, max: 0, moved: false, x: x, y: y, last: tnow };
     tapInfo.max = Math.max(tapInfo.max, touches.size);
+    tapInfo.last = tnow;
     if (touches.size === 1 && rulerHit(x, y) && rulerHit(x, y).kind !== 'edge') {
       rulerDrag = { mode: 'move', x0: x, y0: y, rx: ruler.x, ry: ruler.y, a0: ruler.a, finger: true };
     }
@@ -833,6 +856,10 @@ cv.addEventListener('pointerdown', function (e) {
     return;
   }
   if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (e.pointerType === 'pen') {
+    penAt = performance.now();
+    rejectTouches();
+  }
   if (consumeTap(x, y)) return;
   var rh = rulerHit(x, y);
   if (rh && rh.kind !== 'edge') {
@@ -853,8 +880,14 @@ cv.addEventListener('pointerdown', function (e) {
 
 cv.addEventListener('pointermove', function (e) {
   var x = e.clientX, y = e.clientY;
+  if (e.pointerType === 'pen') penAt = performance.now(); // also hover (iPad Pro)
   if (e.pointerType === 'touch') {
     if (!touches.has(e.pointerId)) return;
+    if ((e.width || 0) > PALM_SIZE || (e.height || 0) > PALM_SIZE) { // grew into a palm
+      rejectTouches();
+      palms.add(e.pointerId);
+      return;
+    }
     touches.set(e.pointerId, [x, y]);
     if (tapInfo && Math.hypot(x - tapInfo.x, y - tapInfo.y) > 10) tapInfo.moved = true;
     var ng = gestureInfo();
@@ -902,8 +935,12 @@ cv.addEventListener('pointermove', function (e) {
   schedule();
 });
 
-function endTouch(e) {
+function endTouch(e, cancelled) {
+  if (palms.delete(e.pointerId)) return;
+  if (!touches.has(e.pointerId)) return;
   touches.delete(e.pointerId);
+  // The system cancels touches it decides are a palm: never a tap.
+  if (cancelled && tapInfo) tapInfo.moved = true;
   gest = gestureInfo();
   if (touches.size) return;
   if (rulerDrag && rulerDrag.finger) {
@@ -912,9 +949,13 @@ function endTouch(e) {
   }
   var t = tapInfo;
   tapInfo = null;
-  if (!t || t.moved || performance.now() - t.t > 320) return;
-  if (t.max === 2 && prefs.gestures) { send({ t: 'undo' }); toast('撤销'); return; }
-  if (t.max === 3 && prefs.gestures) { send({ t: 'redo' }); toast('重做'); return; }
+  var tend = performance.now();
+  if (!t || t.moved || tend - t.t > 320) return;
+  // Two / three fingers landing together and lifting quickly, away from any
+  // pen activity: a deliberate tap, not a hand settling on the screen.
+  var deliberate = t.last - t.t < 120 && tend - penAt > 800 && t.t - penAt > 800;
+  if (t.max === 2 && prefs.gestures && deliberate) { send({ t: 'undo' }); toast('撤销'); return; }
+  if (t.max === 3 && prefs.gestures && deliberate) { send({ t: 'redo' }); toast('重做'); return; }
   if (t.max !== 1) return;
   if (consumeTap(t.x, t.y)) return;
   var now = performance.now();
@@ -928,9 +969,10 @@ function endTouch(e) {
 
 function endPointer(e, cancelled) {
   if (e.pointerType === 'touch') {
-    endTouch(e);
+    endTouch(e, cancelled);
     return;
   }
+  if (e.pointerType === 'pen') penAt = performance.now();
   if (e.pointerId !== penId) return;
   penId = null;
   predicted = [];
@@ -1217,6 +1259,12 @@ function commitStroke(s, e) {
   }
   pending.set(s.lid, s);
   var msg = strokeMsg(s);
+  // Scribble to erase: the add-on checks for pen strokes under it.
+  if (prefs.scribbleErase && s.tool === 'pen' && !s.shape && !s.isShapeTool && !s.ruler && inkIsScribble(s.pts)) {
+    flushHeldTap();
+    send({ t: 'scribble', stroke: msg });
+    return;
+  }
   var isTap = !s.shape && s.pts.length && inkPathLength(s.pts) < 4 && performance.now() - s.t0 < 260;
   var x = isTap ? s.pts[0][0] : 0, y = isTap ? s.pts[0][1] : 0;
   // Only a dot on a card can start a double tap; elsewhere it lands at once.
@@ -1924,12 +1972,18 @@ function buildSettingsPop() {
   n.appendChild(prefToggle('根号 √ 自动整齐', '写完自动变成规整的根号', 'autoRadical'));
   n.appendChild(prefToggle('吸附到图形节点', '端点、角点自动对齐', 'snapNodes'));
   n.appendChild(prefToggle('图形吸附到格点', '打开书写背景时生效', 'gridSnap'));
+  n.appendChild(prefToggle('涂抹擦除', '用笔在笔迹上来回涂抹，连同涂抹线一起擦掉（像 GoodNotes）', 'scribbleErase'));
   n.appendChild(h4('脑图'));
   n.appendChild(prefToggle('笔迹绑定到选中的卡片', '有选中卡片时，新笔迹跟着它走（否则跟最近的卡片）', 'bindSelected'));
   n.appendChild(prefToggle('双击卡片进入聚焦', '卡片上的单点会稍等约 0.3 秒再落笔', 'doubleTapFocus'));
   n.appendChild(prefToggle('手势', '双指轻点撤销，三指轻点重做', 'gestures'));
   n.appendChild(h4('与 MarginNote 融合'));
-  n.appendChild(prefToggle('接管 MN 自带的书写按钮', '点 MN 的笔也会打开 MN Ink；书写时自动关掉 MN 的笔', 'takeover'));
+  n.appendChild(prefToggle('接管 MN 自带的书写按钮', 'MN 的笔按钮变成 MN Ink 的开关，不再进入 MN 自带的书写模式', 'takeover'));
+  var mnb = el('button', 'mini');
+  mnb.textContent = '暂时用 MN 自带笔（改以前的手写）';
+  mnb.style.marginTop = '8px';
+  tap(mnb, function () { closePopover(); send({ t: 'mnPen' }); });
+  n.appendChild(mnb);
   return n;
 }
 
@@ -2141,6 +2195,15 @@ window.ink = {
   },
   committed: function (o) {
     if (o.state) ink.state(o.state);
+    if (o.erased) {
+      // Scribble to erase: the scribble fades out with the ink it took.
+      var sc = pending.get(o.lid);
+      pending.delete(o.lid);
+      if (sc) { vanishing.push({ s: sc, t: performance.now(), hold: 0, fade: 280 }); kickAnim(); }
+      toast('已擦除 ' + o.erased + ' 笔');
+      schedule();
+      return;
+    }
     // Keep the live copy one more frame so the native one is on screen first.
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
