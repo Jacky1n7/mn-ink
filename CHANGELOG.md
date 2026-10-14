@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.5.2 — 2026-10-14
+
+- **Fix: ink could land away from the pen.** The drawing layer only followed the mind map / PDF view on MarginNote's layout callbacks; when MarginNote moved or rebuilt that view without one (focus layers, panels, toolbars), committed strokes were shifted. The layer is now re-aligned (frame and parent view) every 0.25 s while writing.
+
 ## v0.5.1 — 2026-10-14
 
 - **Fix: fingers did nothing on iPad in v0.5.0.** The palm-size limit was far too small (iPad WebKit reports twice the touch radius, so ordinary fingers looked like palms), and a hovering Pencil counted as writing. Only very large contacts count as a palm now, and only a Pencil touching the screen blocks fingers.

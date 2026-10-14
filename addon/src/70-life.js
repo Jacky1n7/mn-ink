@@ -36,6 +36,7 @@ function inkStopTimer() {
 }
 
 function inkTick(addon) {
+  if (INK_UI) inkSafe(function () { inkAlignOverlay(inkFindViews(addon)); });
   var docShown = !!INK_SURF.doc;
   // Mind maps only need a slow pulse; PDFs recycle page views on scroll.
   if (!docShown && INK_TICKS % 4 !== 0) return;
