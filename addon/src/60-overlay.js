@@ -109,34 +109,7 @@ function inkLayoutOverlay(addon) {
     inkCloseOverlay();
     return;
   }
-  inkAlignOverlay(views);
-}
-
-// Keep the drawing page exactly over the mind map / PDF view. MarginNote can
-// move that view (panels, toolbars, rotation, split view) or rebuild it
-// (focus layers) without a layout callback; a stale frame shifts every
-// committed stroke away from the pen.
-function inkAlignOverlay(views) {
-  if (!INK_UI || !views) return false;
-  var ctx = views[INK_UI.surface];
-  if (!ctx || !ctx.host || !ctx.host.superview) return false;
-  var web = INK_UI.web, host = ctx.host;
-  var moved = false;
-  if (web.superview !== host.superview) {
-    web.removeFromSuperview();
-    host.superview.insertSubviewAboveSubview(web, host);
-    moved = true;
-  }
-  var f = host.frame, w = web.frame;
-  if (Math.abs(f.x - w.x) > 0.5 || Math.abs(f.y - w.y) > 0.5 || Math.abs(f.width - w.width) > 0.5 || Math.abs(f.height - w.height) > 0.5) {
-    web.frame = f;
-    moved = true;
-  }
-  if (moved) {
-    inkCall('setView', inkSurfView(ctx));
-    inkPushState(views, { nodes: true });
-  }
-  return moved;
+  INK_UI.web.frame = views.active.host.frame;
 }
 
 function inkJs(code) {
