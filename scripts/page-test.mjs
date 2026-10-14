@@ -165,6 +165,14 @@ const harness = `<script>
     out.palmUndo = __sent.filter(function (x) { return x.t === 'undo'; }).length - out.palmUndoBefore;
     out.palmPan = __sent.filter(function (x) { return x.t === 'view'; }).length - out.viewBeforePalm;
   });
+  // 12c. a fat finger (iPad reports 2× the radius) still pans; a hovering pen does not block fingers
+  later(900, function () {
+    out.viewBeforeFat = __sent.filter(function (x) { return x.t === 'view'; }).length;
+    cv.dispatchEvent(new PointerEvent('pointermove', { pointerId: 40, pointerType: 'pen', clientX: 600, clientY: 600, buttons: 0, pressure: 0, bubbles: true }));
+    function f(type, x, y) { cv.dispatchEvent(new PointerEvent(type, { pointerId: 41, pointerType: 'touch', clientX: x, clientY: y, width: 80, height: 90, bubbles: true })); }
+    f('pointerdown', 400, 400); f('pointermove', 430, 440); f('pointermove', 470, 480); f('pointerup', 470, 480);
+  });
+  later(60, function () { out.fatFingerPan = __sent.filter(function (x) { return x.t === 'view'; }).length - out.viewBeforeFat; });
   // 13. hand tool pans with the mouse
   later(60, function () { setTool('hand'); var v0 = view.ox; stroke([[300, 300], [340, 300], [380, 300]], 'mouse'); out.handPanned = Math.round(v0 - view.ox); });
   // 13b. two mouse taps on one spot = double tap (no dots); a single tap = a dot
@@ -206,7 +214,7 @@ const file = path.join(dir, 'page.html');
 fs.writeFileSync(file, html);
 
 const args = ['--headless', '--disable-gpu', '--hide-scrollbars', `--user-data-dir=${path.join(dir, 'prof')}`,
-  '--virtual-time-budget=6000', '--window-size=1024,720'];
+  '--virtual-time-budget=12000', '--window-size=1024,720'];
 // Headless Chrome finishes the work but often does not exit: read until done, then kill.
 function chrome(extra, until) {
   return new Promise((resolve, reject) => {

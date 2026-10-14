@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.5.1 — 2026-10-14
+
+- **Fix: fingers did nothing on iPad in v0.5.0.** The palm-size limit was far too small (iPad WebKit reports twice the touch radius, so ordinary fingers looked like palms), and a hovering Pencil counted as writing. Only very large contacts count as a palm now, and only a Pencil touching the screen blocks fingers.
+
 ## v0.5.0 — 2026-10-14
 
 - **Scribble to erase** (as in GoodNotes): scribble over pen strokes — a zig-zag across the words, an up-and-down run or a row of loops — and they go away together with the scribble (one undo step). Only pen strokes on the active layer, mostly under the scribble, are erased; highlighter stays. A scribble over nothing is kept as ink. Switch: Settings → 涂抹擦除.

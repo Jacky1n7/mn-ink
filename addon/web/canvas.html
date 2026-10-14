@@ -768,10 +768,12 @@ var penId = null;            // pointer drawing right now
 // Palm rejection: a hand resting on the screen must neither pan / zoom the
 // view nor count as a two-finger tap (undo). Touches near pen activity, very
 // large contacts and contacts the system cancels are treated as palm.
-var penAt = -1e9;            // last pen event (down / move / up / hover)
+var penAt = -1e9;            // last pen contact (down / move / up; not hover)
 var palms = new Set();       // touch pointers ignored until lifted
 var PALM_MS = 600;           // touches starting this soon after the pen = palm
-var PALM_SIZE = 60;          // contact width / height (CSS px) of a palm
+// Contact width / height (CSS px) of a palm. iPad WebKit reports 2× the touch
+// radius, so an ordinary finger is often 40–90: only a whole hand gets here.
+var PALM_SIZE = 150;
 
 function isPalm(e) {
   return performance.now() - penAt < PALM_MS || (e.width || 0) > PALM_SIZE || (e.height || 0) > PALM_SIZE;
@@ -880,7 +882,7 @@ cv.addEventListener('pointerdown', function (e) {
 
 cv.addEventListener('pointermove', function (e) {
   var x = e.clientX, y = e.clientY;
-  if (e.pointerType === 'pen') penAt = performance.now(); // also hover (iPad Pro)
+  if (e.pointerType === 'pen' && (e.buttons || e.pressure > 0)) penAt = performance.now(); // touching, not hovering
   if (e.pointerType === 'touch') {
     if (!touches.has(e.pointerId)) return;
     if ((e.width || 0) > PALM_SIZE || (e.height || 0) > PALM_SIZE) { // grew into a palm
